@@ -27,7 +27,7 @@ type Message struct {
 var (
 	messageQueue      = make(chan Message, 100) // 消息队列，缓冲大小为100
 	failedAttempts    = 0                       // 连续请求失败次数
-	retryWaitTime     = 30 * time.Minute        // 失败后等待时间
+	retryWaitTime     = 10 * time.Minute        // 失败后等待时间
 	normalWaitTime    = 10 * time.Second        // 正常监控的等待时间
 	maxFailedAttempts = 3                       // 最大失败次数，超过后才会等待较长时间
 )
