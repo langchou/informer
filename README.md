@@ -5,7 +5,7 @@
 
 ## 使用方法
 
-`wget -O chh-cr https://github.com/langchou/chiphell-crawler/releases/latest/download/chh-cr-linux-amd64`
+`wget -O chh-cr https://github.com/langchou/chiphell-crawler/releases/latest/download/chh-cr-linux-amd64 && chmod +x chh-cr`
 
 创建config.yaml文件，并填入对应的内容
 
@@ -31,8 +31,6 @@ user_keywords:
     - "iPhone"
     - "手机"
 ```
-给脚本赋予权限
-`sudo chmod +x chh-cr`
 
 后台运行
 `./chh-cr > output.log 2>&1 &`
