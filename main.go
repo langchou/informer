@@ -172,6 +172,10 @@ func monitorPage(db *sql.DB, cookies string, dingTalkClient *dingtalk.DingTalk, 
 		category := s.Find("em > a").Text()
 		postLink := s.Find("a.s.xst")
 		postTitle := postLink.Text()
+
+		// 标题转换成小写
+		postTitle = strings.ToLower(postTitle)
+
 		postHref, exists := postLink.Attr("href")
 		if exists && shouldMonitorCategory(category, monitoredCategories) {
 			postHash := hashString(postTitle)
@@ -183,7 +187,11 @@ func monitorPage(db *sql.DB, cookies string, dingTalkClient *dingtalk.DingTalk, 
 				// 遍历每个手机号及其关键词
 				for phoneNumber, keywords := range userKeywords {
 					for _, keyword := range keywords {
-						if strings.Contains(postTitle, keyword) {
+
+						// 转换关键词为小写，进行匹配
+						lowerKeyword := strings.ToLower(keyword)
+
+						if strings.Contains(postTitle, lowerKeyword) {
 							// 如果标题中包含关键词，则 @ 对应的手机号用户
 							sendDingTalkNotificationforSomeOne(dingTalkClient, postTitle, message, phoneNumber)
 							break // 每个关键词匹配一次即可
