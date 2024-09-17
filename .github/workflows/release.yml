@@ -1,0 +1,37 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 当推送以 "v" 开头的 tag 时触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: 检出仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Step 2: 设置 Go 环境
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.23'  # 根据需要调整 Go 版本
+
+      # Step 3: 下载依赖
+      - name: Install dependencies
+        run: go mod download
+
+      # Step 4: 编译 Go 程序
+      - name: Build Go binary for Linux
+        run: GOOS=linux GOARCH=amd64 go build -o chh-cr-linux-amd64 main.go
+
+      # Step 5: 创建 GitHub Release 并上传二进制文件
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: chh-cr-linux-amd64
+        env:
+          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
