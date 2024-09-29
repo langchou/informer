@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"fmt"
 	"log"
 	"math/rand"
@@ -10,14 +9,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langchou/informer/db"
+	"github.com/langchou/informer/pkg/config"
+	mylog "github.com/langchou/informer/pkg/log"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/blinkbean/dingtalk"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite 驱动
 	"github.com/spf13/viper"
 )
-
-const dbFile = "posts.db"
 
 type Message struct {
 	title   string
@@ -32,40 +33,43 @@ var (
 	maxFailedAttempts = 3                       // 最大失败次数，超过后才会等待较长时间
 )
 
-func main() {
-	// 初始化配置
-	initConfig()
+const dbFile = "data/posts.db"
+const chiphellDB = "chiphell"
 
-	// 打开数据库连接
-	db, err := initDB(dbFile)
+func main() {
+	cfg, err := config.InitConfig()
+	if err != nil {
+		log.Fatalf("初始化配置失败: %v", err)
+	}
+
+	mylog.InitLogger(cfg.LogConfig)
+
+	db, err := db.InitDB(dbFile)
 	if err != nil {
 		log.Fatalf("无法初始化数据库: %v", err)
 	}
-	defer db.Close()
+	defer db.DB.Close()
 
-	// 获取 Cookies 和钉钉 Webhook Token
-	cookies := viper.GetString("cookies")
-	dingTalkToken := viper.GetString("dingtalk_token")
-	dingTalkSecret := viper.GetString("dingtalk_secret")
-	monitoredCategories := viper.GetStringSlice("monitored_categories")
-	userKeyworkds := viper.GetStringMapStringSlice("user_keywords")
+	err = db.CreateTableIfNotExists()
+	if err != nil {
+		log.Fatalf("无法创建表 posts %v", err)
+	}
 
-	// 打印环境变量读取结果
 	fmt.Println("读取的配置:")
-	fmt.Println("Cookies:", cookies)
-	fmt.Println("钉钉 Token:", dingTalkToken)
-	fmt.Println("钉钉 Secret:", dingTalkSecret)
-	fmt.Println("Monitored Categories:", monitoredCategories)
-	fmt.Println("UserKeyworkds:", userKeyworkds)
+	fmt.Println("Cookies:", cfg.Cookies)
+	fmt.Println("钉钉 Token:", cfg.DingTalkToken)
+	fmt.Println("钉钉 Secret:", cfg.DingTalkSecret)
+	fmt.Println("Monitored Categories:", cfg.MonitoredCategories)
+	fmt.Println("UserKeywords:", cfg.UserKeywords)
 
 	// 初始化 DingTalk 客户端
-	dingTalkClient := dingtalk.InitDingTalkWithSecret(dingTalkToken, dingTalkSecret)
+	dingTalkClient := dingtalk.InitDingTalkWithSecret(cfg.DingTalkToken, cfg.DingTalkSecret)
 
 	// 启动一个 goroutine 用于处理消息队列
 	go handleMessages(dingTalkClient)
 
 	for {
-		monitorPage(db, cookies, dingTalkClient, monitoredCategories)
+		monitorPage(db, cfg.Cookies, dingTalkClient, cfg.MonitoredCategories)
 
 		// 根据请求是否成功调整等待时间
 		if failedAttempts == 0 {
@@ -77,60 +81,11 @@ func main() {
 		}
 
 		// 定期清理数据库中过期的帖子记录
-		cleanUpOldPosts(db, 720*time.Hour)
+		db.CleanUpOldPosts(720 * time.Hour)
 	}
 }
 
-func initConfig() {
-	// 设置配置文件名（不带扩展名）
-	viper.SetConfigName("config")
-	// 设置配置文件类型
-	viper.SetConfigType("yaml")
-	// 设置配置文件路径
-	viper.AddConfigPath(".") // 当前目录
-
-	// 读取配置文件
-	err := viper.ReadInConfig()
-	if err != nil {
-		log.Fatalf("无法读取配置文件: %v", err)
-	}
-
-	// 设置环境变量前缀
-	viper.SetEnvPrefix("app")
-
-	// 绑定环境变量，以防配置文件中没有相应配置
-	viper.BindEnv("cookies")
-	viper.BindEnv("dingtalk_token")
-	viper.BindEnv("dingtalk_secret")
-	viper.BindEnv("monitored_categories")
-	viper.BindEnv("user_keywords")
-
-	// 设置默认值（仅当文件和环境变量均未提供时生效）
-	viper.SetDefault("monitored_categories", []string{"显卡", "处理器主板内存", "笔记本/平板", "手机通讯", "影音娱乐", "游戏设备", "网络设备", "外设"})
-	viper.SetDefault("user_keywords", map[string][]string{})
-}
-
-func initDB(filepath string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", filepath)
-	if err != nil {
-		return nil, err
-	}
-
-	// 创建表格
-	createTableQuery := `
-	CREATE TABLE IF NOT EXISTS posts (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		hash TEXT NOT NULL UNIQUE,
-		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-	);`
-	_, err = db.Exec(createTableQuery)
-	if err != nil {
-		return nil, err
-	}
-	return db, nil
-}
-
-func monitorPage(db *sql.DB, cookies string, dingTalkClient *dingtalk.DingTalk, monitoredCategories []string) {
+func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk.DingTalk, monitoredCategories []string) {
 	client := &http.Client{}
 	url := "https://www.chiphell.com/forum-26-1.html"
 
@@ -179,8 +134,8 @@ func monitorPage(db *sql.DB, cookies string, dingTalkClient *dingtalk.DingTalk, 
 		postHref, exists := postLink.Attr("href")
 		if exists && shouldMonitorCategory(category, monitoredCategories) {
 			postHash := hashString(postTitle)
-			if isNewPost(db, postHash) {
-				storePostHash(db, postHash)
+			if database.IsNewPost(postHash) {
+				database.StorePostHash(postHash)
 				message := fmt.Sprintf("类别: %s\n标题: %s\n链接: https://www.chiphell.com/%s", category, postTitle, postHref)
 				log.Println("检测到新帖子:", message)
 
@@ -193,7 +148,7 @@ func monitorPage(db *sql.DB, cookies string, dingTalkClient *dingtalk.DingTalk, 
 
 						if strings.Contains(postTitle, lowerKeyword) {
 							// 如果标题中包含关键词，则 @ 对应的手机号用户
-							sendDingTalkNotificationforSomeOne(dingTalkClient, postTitle, message, phoneNumber)
+							sendDingTalkNotification(dingTalkClient, postTitle, message, phoneNumber)
 							break // 每个关键词匹配一次即可
 						}
 					}
@@ -224,33 +179,7 @@ func hashString(s string) string {
 	return fmt.Sprintf("%x", hash)
 }
 
-func isNewPost(db *sql.DB, hash string) bool {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM posts WHERE hash = ?)`
-	err := db.QueryRow(query, hash).Scan(&exists)
-	if err != nil {
-		log.Printf("数据库查询错误: %v", err)
-		return false
-	}
-	return !exists
-}
-
-func storePostHash(db *sql.DB, hash string) {
-	insertQuery := `INSERT INTO posts (hash) VALUES (?)`
-	_, err := db.Exec(insertQuery, hash)
-	if err != nil {
-		log.Printf("无法存储帖子哈希: %v", err)
-	}
-}
-
-func cleanUpOldPosts(db *sql.DB, duration time.Duration) {
-	deleteQuery := `DELETE FROM posts WHERE timestamp < datetime('now', ?)`
-	_, err := db.Exec(deleteQuery, fmt.Sprintf("-%d seconds", int(duration.Seconds())))
-	if err != nil {
-		log.Printf("无法清理旧帖子记录: %v", err)
-	}
-}
-
+// 过滤帖子类别
 func shouldMonitorCategory(category string, monitoredCategories []string) bool {
 	for _, monitoredCategory := range monitoredCategories {
 		if strings.Contains(category, monitoredCategory) {
@@ -260,8 +189,17 @@ func shouldMonitorCategory(category string, monitoredCategories []string) bool {
 	return false
 }
 
-func sendDingTalkNotification(dingTalkClient *dingtalk.DingTalk, title, content string) {
-	err := dingTalkClient.SendTextMessage(fmt.Sprintf("%s\n%s", title, content))
+func sendDingTalkNotification(dingTalkClient *dingtalk.DingTalk, title, content string, phoneNumber ...string) {
+	msg := fmt.Sprintf("%s\n%s", title, content)
+	var err error
+	if len(phoneNumber) > 0 && phoneNumber[0] != "" {
+		// @ 对应手机号用户
+		err = dingTalkClient.SendTextMessage(msg, dingtalk.WithAtMobiles([]string{phoneNumber[0]}))
+	} else {
+		// 发送普通通知
+		err = dingTalkClient.SendTextMessage(msg)
+	}
+
 	if err != nil {
 		log.Println("发送钉钉通知失败:", err)
 	} else {
