@@ -36,12 +36,14 @@ func InitLogger(logFile string, maxSize, maxBackups, maxAge int, compress bool) 
 	return &Logger{Sugar: zapLogger.Sugar()}
 }
 
-func (l *Logger) Info(msg string, keysAndValues ...interface{}) {
-	l.Sugar.Infow(msg, keysAndValues...)
+// 支持格式化的 Info 方法
+func (l *Logger) Info(format string, args ...interface{}) {
+	l.Sugar.Infof(format, args...)
 }
 
-func (l *Logger) Error(msg string, keysAndValues ...interface{}) {
-	l.Sugar.Errorw(msg, keysAndValues...)
+// 支持格式化的 Error 方法
+func (l *Logger) Error(format string, args ...interface{}) {
+	l.Sugar.Errorf(format, args...)
 }
 
 func (l *Logger) Sync() {
