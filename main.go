@@ -12,9 +12,9 @@ import (
 	"github.com/langchou/informer/db"
 	"github.com/langchou/informer/pkg/config"
 	mylog "github.com/langchou/informer/pkg/log"
+	"github.com/langchou/informer/pkg/notifier"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/blinkbean/dingtalk"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite 驱动
 	"github.com/spf13/viper"
@@ -74,13 +74,12 @@ func main() {
 	}
 
 	// 初始化 DingTalk 客户端
-	dingTalkClient := dingtalk.InitDingTalkWithSecret(cfg.DingTalkToken, cfg.DingTalkSecret)
-
+	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalkToken, cfg.DingTalkSecret, applog)
 	// 启动一个 goroutine 用于处理消息队列
-	go handleMessages(dingTalkClient)
+	go handleMessages(dingNotifier)
 
 	for {
-		monitorPage(db, cfg.Cookies, dingTalkClient, cfg.MonitoredCategories)
+		monitorPage(db, cfg.Cookies, dingNotifier, cfg.MonitoredCategories)
 
 		// 根据请求是否成功调整等待时间
 		if failedAttempts == 0 {
@@ -96,13 +95,13 @@ func main() {
 	}
 }
 
-func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk.DingTalk, monitoredCategories []string) {
+func monitorPage(database *db.Database, cookies string, dingNotifier *notifier.DingTalkNotifier, monitoredCategories []string) {
 	client := &http.Client{}
 	url := "https://www.chiphell.com/forum-26-1.html"
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		reportError(dingTalkClient, "创建请求失败", err.Error())
+		dingNotifier.ReportError("创建请求失败", err.Error())
 		return
 	}
 
@@ -111,13 +110,13 @@ func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk
 
 	resp, err := client.Do(req)
 	if err != nil {
-		handleRequestFailure(dingTalkClient, err.Error())
+		handleRequestFailure(dingNotifier, err.Error())
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		handleRequestFailure(dingTalkClient, fmt.Sprintf("状态码: %d", resp.StatusCode))
+		handleRequestFailure(dingNotifier, fmt.Sprintf("状态码: %d", resp.StatusCode))
 		return
 	}
 
@@ -126,7 +125,7 @@ func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
-		reportError(dingTalkClient, "解析 HTML 失败", err.Error())
+		dingNotifier.ReportError("解析 HTML 失败", err.Error())
 		return
 	}
 
@@ -159,7 +158,7 @@ func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk
 
 						if strings.Contains(postTitle, lowerKeyword) {
 							// 如果标题中包含关键词，则 @ 对应的手机号用户
-							sendDingTalkNotification(dingTalkClient, postTitle, message, phoneNumber)
+							dingNotifier.SendNotification(postTitle, message, phoneNumber)
 							break // 每个关键词匹配一次即可
 						}
 					}
@@ -172,7 +171,7 @@ func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk
 	})
 }
 
-func handleMessages(dingTalkClient *dingtalk.DingTalk) {
+func handleMessages(dingNotifier *notifier.DingTalkNotifier) {
 	ticker := time.NewTicker(time.Minute / 20) // 每 3 秒发送一条消息
 	defer ticker.Stop()
 
@@ -180,7 +179,7 @@ func handleMessages(dingTalkClient *dingtalk.DingTalk) {
 		select {
 		case msg := <-messageQueue:
 			<-ticker.C // 等待限速
-			sendDingTalkNotification(dingTalkClient, msg.title, msg.content)
+			dingNotifier.SendNotification(msg.title, msg.content)
 		}
 	}
 }
@@ -200,49 +199,14 @@ func shouldMonitorCategory(category string, monitoredCategories []string) bool {
 	return false
 }
 
-func sendDingTalkNotification(dingTalkClient *dingtalk.DingTalk, title, content string, phoneNumber ...string) {
-	msg := fmt.Sprintf("%s\n%s", title, content)
-	var err error
-	if len(phoneNumber) > 0 && phoneNumber[0] != "" {
-		// @ 对应手机号用户
-		err = dingTalkClient.SendTextMessage(msg, dingtalk.WithAtMobiles([]string{phoneNumber[0]}))
-	} else {
-		// 发送普通通知
-		err = dingTalkClient.SendTextMessage(msg)
-	}
-
-	if err != nil {
-		applog.Error("发送钉钉通知失败:", err)
-	} else {
-		applog.Info("钉钉通知发送成功")
-	}
-}
-
-func sendDingTalkNotificationforSomeOne(dingTalkClient *dingtalk.DingTalk, title, content string, phoneNumber string) {
-	msg := fmt.Sprintf("%s\n%s", title, content)
-	err := dingTalkClient.SendTextMessage(msg, dingtalk.WithAtMobiles([]string{phoneNumber}))
-
-	if err != nil {
-		applog.Error("发送钉钉通知失败:", err)
-	} else {
-		applog.Info("钉钉通知发送成功")
-	}
-}
-
-func handleRequestFailure(dingTalkClient *dingtalk.DingTalk, errorMsg string) {
+func handleRequestFailure(dingNotifier *notifier.DingTalkNotifier, errorMsg string) {
 	failedAttempts++
 
 	if failedAttempts <= maxFailedAttempts {
 		// 第一次失败时立即发送通知
-		reportError(dingTalkClient, "请求失败", errorMsg)
+		dingNotifier.ReportError("请求失败", errorMsg)
 	} else {
 		// 失败超过一次后，减少发送频率
 		applog.Error("连续请求失败，等待下次重试。")
 	}
-}
-
-func reportError(dingTalkClient *dingtalk.DingTalk, title, content string) {
-	applog.Error("错误: %s - %s\n", title, content)
-	// 将错误信息也添加到消息队列
-	messageQueue <- Message{title: "监控程序错误: " + title, content: content}
 }
