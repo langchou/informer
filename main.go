@@ -31,10 +31,10 @@ var (
 	retryWaitTime     = 10 * time.Minute        // 失败后等待时间
 	normalWaitTime    = 10 * time.Second        // 正常监控的等待时间
 	maxFailedAttempts = 3                       // 最大失败次数，超过后才会等待较长时间
+	applog            *mylog.Logger             // 全局日志实例
 )
 
 const dbFile = "data/posts.db"
-const chiphellDB = "chiphell"
 
 func main() {
 	cfg, err := config.InitConfig()
@@ -42,25 +42,36 @@ func main() {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
 
-	mylog.InitLogger(cfg.LogConfig)
+	applog = mylog.InitLogger(
+		cfg.LogConfig.File,
+		cfg.LogConfig.MaxSize,
+		cfg.LogConfig.MaxBackups,
+		cfg.LogConfig.MaxAge,
+		cfg.LogConfig.Compress,
+	)
+	defer applog.Sync()
 
-	db, err := db.InitDB(dbFile)
+	// 日志输出示例
+	applog.Info("读取的配置",
+		"Cookies", cfg.Cookies,
+		"钉钉 Token", cfg.DingTalkToken,
+		"钉钉 Secret", cfg.DingTalkSecret,
+		"Monitored Categories", cfg.MonitoredCategories,
+		"User Keywords", cfg.UserKeywords,
+	)
+
+	db, err := db.InitDB(dbFile, applog)
 	if err != nil {
-		log.Fatalf("无法初始化数据库: %v", err)
+		applog.Error("无法初始化数据库", "error", err)
+		return
 	}
 	defer db.DB.Close()
 
 	err = db.CreateTableIfNotExists()
 	if err != nil {
-		log.Fatalf("无法创建表 posts %v", err)
+		applog.Error("无法创建表 posts", "error", err)
+		return
 	}
-
-	fmt.Println("读取的配置:")
-	fmt.Println("Cookies:", cfg.Cookies)
-	fmt.Println("钉钉 Token:", cfg.DingTalkToken)
-	fmt.Println("钉钉 Secret:", cfg.DingTalkSecret)
-	fmt.Println("Monitored Categories:", cfg.MonitoredCategories)
-	fmt.Println("UserKeywords:", cfg.UserKeywords)
 
 	// 初始化 DingTalk 客户端
 	dingTalkClient := dingtalk.InitDingTalkWithSecret(cfg.DingTalkToken, cfg.DingTalkSecret)
@@ -76,7 +87,7 @@ func main() {
 			waitTime := time.Duration(10+rand.Intn(5)) * time.Second
 			time.Sleep(waitTime)
 		} else {
-			log.Printf("请求失败次数 %d 次，等待 %v 后重新尝试", failedAttempts, retryWaitTime)
+			applog.Info("请求失败次数 %d 次，等待 %v 后重新尝试", failedAttempts, retryWaitTime)
 			time.Sleep(retryWaitTime)
 		}
 
@@ -137,7 +148,7 @@ func monitorPage(database *db.Database, cookies string, dingTalkClient *dingtalk
 			if database.IsNewPost(postHash) {
 				database.StorePostHash(postHash)
 				message := fmt.Sprintf("类别: %s\n标题: %s\n链接: https://www.chiphell.com/%s", category, postTitle, postHref)
-				log.Println("检测到新帖子:", message)
+				applog.Info("检测到新帖子:", message)
 
 				// 遍历每个手机号及其关键词
 				for phoneNumber, keywords := range userKeywords {
@@ -201,9 +212,9 @@ func sendDingTalkNotification(dingTalkClient *dingtalk.DingTalk, title, content 
 	}
 
 	if err != nil {
-		log.Println("发送钉钉通知失败:", err)
+		applog.Error("发送钉钉通知失败:", err)
 	} else {
-		log.Println("钉钉通知发送成功")
+		applog.Info("钉钉通知发送成功")
 	}
 }
 
@@ -212,9 +223,9 @@ func sendDingTalkNotificationforSomeOne(dingTalkClient *dingtalk.DingTalk, title
 	err := dingTalkClient.SendTextMessage(msg, dingtalk.WithAtMobiles([]string{phoneNumber}))
 
 	if err != nil {
-		log.Println("发送钉钉通知失败:", err)
+		applog.Error("发送钉钉通知失败:", err)
 	} else {
-		log.Println("钉钉通知发送成功")
+		applog.Info("钉钉通知发送成功")
 	}
 }
 
@@ -226,12 +237,12 @@ func handleRequestFailure(dingTalkClient *dingtalk.DingTalk, errorMsg string) {
 		reportError(dingTalkClient, "请求失败", errorMsg)
 	} else {
 		// 失败超过一次后，减少发送频率
-		log.Println("连续请求失败，等待下次重试。")
+		applog.Error("连续请求失败，等待下次重试。")
 	}
 }
 
 func reportError(dingTalkClient *dingtalk.DingTalk, title, content string) {
-	log.Printf("错误: %s - %s\n", title, content)
+	applog.Error("错误: %s - %s\n", title, content)
 	// 将错误信息也添加到消息队列
 	messageQueue <- Message{title: "监控程序错误: " + title, content: content}
 }
