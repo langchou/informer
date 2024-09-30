@@ -53,11 +53,11 @@ func main() {
 
 	// 日志输出示例
 	applog.Info("读取的配置",
-		"Cookies", cfg.Cookies,
-		"钉钉 Token", cfg.DingTalkToken,
-		"钉钉 Secret", cfg.DingTalkSecret,
-		"Monitored Categories", cfg.MonitoredCategories,
-		"User Keywords", cfg.UserKeywords,
+		"Cookies", cfg.Chiphell.Cookies,
+		"钉钉 Token", cfg.DingTalk.Token,
+		"钉钉 Secret", cfg.DingTalk.Secret,
+		"Monitored Categories", cfg.Chiphell.MonitoredCategories,
+		"User Keywords", cfg.Chiphell.UserKeywords,
 	)
 
 	db, err := db.InitDB(dbFile, applog)
@@ -74,12 +74,12 @@ func main() {
 	}
 
 	// 初始化 DingTalk 客户端
-	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalkToken, cfg.DingTalkSecret, applog)
+	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
 	// 启动一个 goroutine 用于处理消息队列
 	go handleMessages(dingNotifier)
 
 	for {
-		monitorPage(db, cfg.Cookies, dingNotifier, cfg.MonitoredCategories)
+		monitorPage(db, cfg.Chiphell.Cookies, dingNotifier, cfg.Chiphell.MonitoredCategories)
 
 		// 根据请求是否成功调整等待时间
 		if failedAttempts == 0 {
