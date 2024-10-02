@@ -26,12 +26,12 @@ jobs:
 
       # Step 4: 编译 Go 程序
       - name: Build Go binary for Linux
-        run: GOOS=linux GOARCH=amd64 go build -o chh-cr-linux-amd64 main.go
+        run: make build-linux
 
       # Step 5: 创建 GitHub Release 并上传二进制文件
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: chh-cr-linux-amd64
+          files: informer-linux-amd64
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
