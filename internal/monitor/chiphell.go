@@ -214,7 +214,6 @@ func (c *ChiphellMonitor) MonitorPage() {
 
 		// 正常处理完毕，等待一段时间后再进行下一次监控
 		waitTime := time.Duration(c.WaitTimeRange.Min+rand.Intn(c.WaitTimeRange.Max-c.WaitTimeRange.Min+1)) * time.Second
-		c.Logger.Info("等待 %v 后开始下一轮监控", waitTime)
 		time.Sleep(waitTime)
 
 		// 定期清理数据库中过期的帖子
