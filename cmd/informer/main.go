@@ -71,15 +71,15 @@ func main() {
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
 
-	chiphellMonitor := &monitor.ChiphellMonitor{
-		Cookies:       cfg.Chiphell.Cookies,
-		Categories:    cfg.Chiphell.MonitoredCategories,
-		UserKeywords:  cfg.Chiphell.UserKeywords, // 用户关键词配置
-		Notifier:      dingNotifier,
-		Database:      db,
-		Logger:        applog,
-		WaitTimeRange: cfg.Chiphell.WaitTimeRange,
-	}
+	chiphellMonitor := monitor.NewChiphellMonitor(
+		cfg.Chiphell.Cookies,
+		cfg.Chiphell.MonitoredCategories,
+		cfg.Chiphell.UserKeywords,
+		dingNotifier,
+		db,
+		applog,
+		cfg.Chiphell.WaitTimeRange, // 从配置中读取等待时间范围
+	)
 
 	for {
 		chiphellMonitor.MonitorPage()

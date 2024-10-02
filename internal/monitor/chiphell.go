@@ -21,12 +21,66 @@ type ChiphellMonitor struct {
 	Notifier      *notifier.DingTalkNotifier
 	Database      *db.Database
 	Logger        *mylog.Logger
+	MessageQueue  chan NotificationMessage
 	WaitTimeRange struct {
 		Min int
 		Max int
 	}
 }
 
+type NotificationMessage struct {
+	Title         string
+	Message       string
+	AtPhoneNumber string
+}
+
+func NewChiphellMonitor(cookies string, categories []string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) *ChiphellMonitor {
+	monitor := &ChiphellMonitor{
+		Cookies:       cookies,
+		Categories:    categories,
+		UserKeywords:  userKeywords,
+		Notifier:      notifier,
+		Database:      database,
+		Logger:        logger,
+		MessageQueue:  make(chan NotificationMessage, 100), // 创建消息队列，容量100
+		WaitTimeRange: waitTimeRange,
+	}
+
+	// 启动 goroutine 处理消息队列
+	go monitor.processMessageQueue()
+
+	return monitor
+}
+
+// 消息队列的处理函数，每3秒发送一条消息
+func (c *ChiphellMonitor) processMessageQueue() {
+	for {
+		select {
+		case msg := <-c.MessageQueue:
+			// 发送消息
+			err := c.Notifier.SendNotification(msg.Title, msg.Message, msg.AtPhoneNumber)
+			if err != nil {
+				c.Logger.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
+			} else {
+				c.Logger.Info(fmt.Sprintf("成功发送消息: %s", msg.Message))
+			}
+			time.Sleep(3 * time.Second) // 控制发送频率，每3秒发送一条
+		}
+	}
+}
+
+// 将通知消息放入队列
+func (c *ChiphellMonitor) enqueueNotification(title, message, atPhoneNumber string) {
+	notification := NotificationMessage{
+		Title:         title,
+		Message:       message,
+		AtPhoneNumber: atPhoneNumber,
+	}
+
+	c.MessageQueue <- notification
+}
+
+// 获取页面内容
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", "https://www.chiphell.com/forum-26-1.html", nil)
@@ -89,20 +143,21 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			c.Database.StorePostHash(postHash)
 			message := fmt.Sprintf("类别: %s\n标题: %s\n链接: %s", post.Category, post.Title, post.Link)
 
+			c.Logger.Info(fmt.Sprintf("检测到新帖子: 类别: %s 标题: %s 链接: %s", post.Category, post.Title, post.Link))
+
+			// 将通知加入队列
+			c.enqueueNotification(post.Title, message, "")
+
 			// 遍历用户的关键词进行匹配
 			for phoneNumber, keywords := range c.UserKeywords {
 				for _, keyword := range keywords {
 					lowerKeyword := strings.ToLower(keyword)
 
 					if strings.Contains(strings.ToLower(post.Title), lowerKeyword) {
-						c.Notifier.SendNotification(post.Title, message, phoneNumber)
-						time.Sleep(3 * time.Second) // 添加3秒的等待以控制发送频率
-						break
+						c.enqueueNotification(post.Title, message, phoneNumber)
 					}
 				}
 			}
-
-			c.Logger.Info(fmt.Sprintf("检测到新帖子: 类别: %s 标题: %s 链接: %s", post.Category, post.Title, post.Link))
 		}
 	}
 	return nil
