@@ -32,6 +32,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: informer-linux-amd64
+          files: build/informer-linux-amd64  # 指定完整路径
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

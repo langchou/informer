@@ -5,7 +5,7 @@
 
 ## 使用方法
 
-`wget -O informer https://github.com/langchou/chiphell-crawler/releases/latest/download/informer-linux-amd64 && chmod +x informer`
+`wget -O informer https://github.com/langchou/informer/releases/latest/download/informer-linux-amd64 && chmod +x informer`
 
 创建data/config.yaml文件，并填入对应的内容
 
