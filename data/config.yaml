@@ -25,6 +25,9 @@ chiphell:
       - "e3"
     "158********":
       - "iphone"
+  wait_time_range:
+    min: 2
+    max: 5
 
 log:
   file: "data/app.log"

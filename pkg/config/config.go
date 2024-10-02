@@ -23,6 +23,10 @@ type ChiphellConfig struct {
 	Cookies             string
 	MonitoredCategories []string
 	UserKeywords        map[string][]string
+	WaitTimeRange       struct {
+		Min int
+		Max int
+	}
 }
 
 type Config struct {
@@ -51,10 +55,19 @@ func InitConfig() (*Config, error) {
 		Cookies:             viper.GetString("chiphell.cookies"),
 		MonitoredCategories: viper.GetStringSlice("chiphell.monitored_categories"),
 		UserKeywords:        viper.GetStringMapStringSlice("chiphell.user_keywords"),
+		WaitTimeRange: struct {
+			Min int
+			Max int
+		}{
+			Min: viper.GetInt("chiphell.wait_time_range.min"),
+			Max: viper.GetInt("chiphell.wait_time_range.max"),
+		},
 	}
 
 	viper.SetDefault("chiphell.monitored_categories", []string{"显卡", "处理器主板内存", "笔记本/平板", "手机通讯", "影音娱乐", "游戏设备", "网络设备", "外设"})
 	viper.SetDefault("chiphell.user_keywords", map[string][]string{})
+	viper.SetDefault("chiphell.wait_time_range.min", 5)
+	viper.SetDefault("chiphell.wait_time_range.max", 10)
 
 	logConfig := LogConfig{
 		File:       viper.GetString("log.file"),
