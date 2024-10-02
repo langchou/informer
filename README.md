@@ -5,35 +5,47 @@
 
 ## 使用方法
 
-`wget -O chh-cr https://github.com/langchou/chiphell-crawler/releases/latest/download/chh-cr-linux-amd64 && chmod +x chh-cr`
+`wget -O informer https://github.com/langchou/chiphell-crawler/releases/latest/download/informer-linux-amd64 && chmod +x informer`
 
-创建config.yaml文件，并填入对应的内容
+创建data/config.yaml文件，并填入对应的内容
 
 ``` yaml
-cookies: "<chiphell cookies>"
-dingtalk_token: "<钉钉机器人token>"
-dingtalk_secret: "<钉钉机器人加签密钥>"
-# 需要监控的板块
-monitored_categories:
-  - "显卡"
-  - "处理器主板内存"
-  - "笔记本/平板"
-  - "手机通讯"
-  - "影音娱乐"
-  - "游戏设备"
-  - "网络设备"
-  - "外设"
-user_keywords:
-  "158********":
-    - "RTX"
+dingtalk:
+  token: ""
+  secret: ""
+
+chiphell:
+  cookies: ""
+  monitored_categories:
     - "显卡"
-  "132********":
-    - "iPhone"
-    - "手机"
+    - "处理器主板内存"
+    - "笔记本/平板"
+    - "手机通讯"
+    - "影音娱乐"
+    - "游戏设备"
+    - "网络设备"
+    - "外设"
+  user_keywords:
+    "158********":
+      - "iphone"
+      - "显卡"
+    "177********":
+      - "iphone"
+  wait_time_range:
+    min: 2
+    max: 5
+
+log:
+  file: "data/app.log"
+  max_size: 10
+  max_backups: 5
+  max_age: 30
+  compress: true
+
 ```
 
 后台运行
-`./chh-cr > output.log 2>&1 &`
+`./informer &`
 
 
 ## 特性
@@ -50,8 +62,8 @@ user_keywords:
 - [ ] 热更新cookies
 - [x] 钉钉群内通过手机号at对应用户
 - [ ] docker支持
-- [ ] ...
-
+- [x] 解耦功能
+- [ ] 支持多个论坛监控
 
 
 ## 免责声明
