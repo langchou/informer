@@ -1,37 +1,23 @@
+logconfig:
+  file: "data/app.log"
+  maxSize: 10
+  maxBackups: 5
+  maxAge: 30
+  compress: true
+
 dingtalk:
   token: ""
   secret: ""
 
-chiphell:
-  cookies: ""
-  monitored_categories:
-    - "显卡"
-    - "处理器主板内存"
-    - "笔记本/平板"
-    - "手机通讯"
-    - "影音娱乐"
-    - "游戏设备"
-    - "网络设备"
-    - "外设"
-  user_keywords:
-    "158********":
-      - "iphone"
-      - "显卡"
-      - "软路由"
-      - "apple"
-      - "master"
-      - "anywhere"
-      - "e5"
-      - "e3"
-    "158********":
-      - "iphone"
-  wait_time_range:
-    min: 2
-    max: 5
+forums:
+  chiphell:
+    cookies: ""
+    userKeyWords:
+      "158********":
+        - "iphone"
+      "158********":
+        - "iphone"
+    waitTimeRange:
+      min: 2
+      max: 5
 
-log:
-  file: "data/app.log"
-  max_size: 10
-  max_backups: 5
-  max_age: 30
-  compress: true

@@ -14,9 +14,11 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+var _ ForumMonitor = &ChiphellMonitor{}
+
 type ChiphellMonitor struct {
+	ForumName     string
 	Cookies       string
-	Categories    []string
 	UserKeywords  map[string][]string // 手机号及其关键词的映射
 	Notifier      *notifier.DingTalkNotifier
 	Database      *db.Database
@@ -34,10 +36,10 @@ type NotificationMessage struct {
 	AtPhoneNumber string
 }
 
-func NewChiphellMonitor(cookies string, categories []string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) *ChiphellMonitor {
+func NewChiphellMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) *ChiphellMonitor {
 	monitor := &ChiphellMonitor{
+		ForumName:     forumName,
 		Cookies:       cookies,
-		Categories:    categories,
 		UserKeywords:  userKeywords,
 		Notifier:      notifier,
 		Database:      database,
@@ -45,7 +47,6 @@ func NewChiphellMonitor(cookies string, categories []string, userKeywords map[st
 		MessageQueue:  make(chan NotificationMessage, 100), // 创建消息队列，容量100
 		WaitTimeRange: waitTimeRange,
 	}
-
 	// 启动 goroutine 处理消息队列
 	go monitor.processMessageQueue()
 
@@ -119,16 +120,14 @@ func (c *ChiphellMonitor) ParseContent(content string) ([]Post, error) {
 	}
 
 	doc.Find("tbody[id^='normalthread_']").Each(func(i int, s *goquery.Selection) {
-		category := s.Find("em > a").Text()
 		postLink := s.Find("a.s.xst")
 		postTitle := postLink.Text()
 
 		postHref, exists := postLink.Attr("href")
-		if exists && c.shouldMonitorCategory(category) {
+		if exists {
 			posts = append(posts, Post{
-				Title:    postTitle,
-				Link:     "https://www.chiphell.com/" + postHref,
-				Category: category,
+				Title: postTitle,
+				Link:  "https://www.chiphell.com/" + postHref,
 			})
 		}
 	})
@@ -139,11 +138,11 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 	for _, post := range posts {
 		postHash := util.HashString(post.Title)
 
-		if c.Database.IsNewPost(postHash) {
-			c.Database.StorePostHash(postHash)
-			message := fmt.Sprintf("类别: %s\n标题: %s\n链接: %s", post.Category, post.Title, post.Link)
+		if c.Database.IsNewPost(c.ForumName, postHash) {
+			c.Database.StorePostHash(c.ForumName, postHash)
+			message := fmt.Sprintf("标题: %s\n链接: %s", post.Title, post.Link)
 
-			c.Logger.Info(fmt.Sprintf("检测到新帖子: 类别: %s 标题: %s 链接: %s", post.Category, post.Title, post.Link))
+			c.Logger.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 将通知加入队列
 			c.enqueueNotification(post.Title, message, "")
@@ -161,15 +160,6 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 		}
 	}
 	return nil
-}
-
-func (c *ChiphellMonitor) shouldMonitorCategory(category string) bool {
-	for _, monitoredCategory := range c.Categories {
-		if strings.Contains(category, monitoredCategory) {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *ChiphellMonitor) MonitorPage() {
@@ -217,6 +207,6 @@ func (c *ChiphellMonitor) MonitorPage() {
 		time.Sleep(waitTime)
 
 		// 定期清理数据库中过期的帖子
-		c.Database.CleanUpOldPosts(720 * time.Hour)
+		// c.Database.CleanUpOldPosts(720 * time.Hour)
 	}
 }

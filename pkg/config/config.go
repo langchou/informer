@@ -1,38 +1,38 @@
 package config
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/spf13/viper"
 )
 
 type LogConfig struct {
-	File       string
-	MaxSize    int
-	MaxBackups int
-	MaxAge     int
-	Compress   bool
+	File       string `yaml:"file"`
+	MaxSize    int    `yaml:"maxSize"`
+	MaxBackups int    `yaml:"maxBackups"`
+	MaxAge     int    `yaml:"maxAge"`
+	Compress   bool   `yaml:"compress"`
 }
 
 type DingTalkConfig struct {
-	Token  string
-	Secret string
+	Token  string `yaml:"token"`
+	Secret string `yaml:"secret"`
 }
 
-type ChiphellConfig struct {
-	Cookies             string
-	MonitoredCategories []string
-	UserKeywords        map[string][]string
-	WaitTimeRange       struct {
-		Min int
-		Max int
-	}
+type ForumConfig struct {
+	Cookies       string              `yaml:"cookies"`
+	UserKeywords  map[string][]string `yaml:"userKeywords"`
+	WaitTimeRange struct {
+		Min int `yaml:"min"`
+		Max int `yaml:"max"`
+	} `yaml:"waitTimeRange"`
 }
 
 type Config struct {
-	LogConfig LogConfig
-	DingTalk  DingTalkConfig
-	Chiphell  ChiphellConfig
+	LogConfig LogConfig              `yaml:"log"`
+	DingTalk  DingTalkConfig         `yaml:"dingtalk"`
+	Forums    map[string]ForumConfig `yaml:"forums"`
 }
 
 func InitConfig() (*Config, error) {
@@ -46,43 +46,20 @@ func InitConfig() (*Config, error) {
 		return nil, err
 	}
 
-	dingTalkConfig := DingTalkConfig{
-		Token:  viper.GetString("dingtalk.token"),
-		Secret: viper.GetString("dingtalk.secret"),
-	}
-
-	chiphellConfig := ChiphellConfig{
-		Cookies:             viper.GetString("chiphell.cookies"),
-		MonitoredCategories: viper.GetStringSlice("chiphell.monitored_categories"),
-		UserKeywords:        viper.GetStringMapStringSlice("chiphell.user_keywords"),
-		WaitTimeRange: struct {
-			Min int
-			Max int
-		}{
-			Min: viper.GetInt("chiphell.wait_time_range.min"),
-			Max: viper.GetInt("chiphell.wait_time_range.max"),
-		},
-	}
-
-	viper.SetDefault("chiphell.monitored_categories", []string{"显卡", "处理器主板内存", "笔记本/平板", "手机通讯", "影音娱乐", "游戏设备", "网络设备", "外设"})
-	viper.SetDefault("chiphell.user_keywords", map[string][]string{})
 	viper.SetDefault("chiphell.wait_time_range.min", 5)
 	viper.SetDefault("chiphell.wait_time_range.max", 10)
 
-	logConfig := LogConfig{
-		File:       viper.GetString("log.file"),
-		MaxSize:    viper.GetInt("log.max_size"),
-		MaxBackups: viper.GetInt("log.max_backups"),
-		MaxAge:     viper.GetInt("log.max_age"),
-		Compress:   viper.GetBool("log.compress"),
+	// 定义配置对象
+	var config Config
+
+	// 将viper解析到配置结构体中
+	err = viper.Unmarshal(&config)
+	if err != nil {
+		log.Fatalf("无法解析配置文件到结构体: %v", err)
+		return nil, err
 	}
 
-	// 构造最终的 Config 对象
-	config := &Config{
-		LogConfig: logConfig,
-		DingTalk:  dingTalkConfig,
-		Chiphell:  chiphellConfig,
-	}
+	fmt.Printf("%+v\n", config)
 
-	return config, nil
+	return &config, nil
 }

@@ -19,14 +19,7 @@ type Message struct {
 	content string
 }
 
-var (
-	messageQueue      = make(chan Message, 100) // 消息队列，缓冲大小为100
-	failedAttempts    = 0                       // 连续请求失败次数
-	retryWaitTime     = 10 * time.Minute        // 失败后等待时间
-	normalWaitTime    = 10 * time.Second        // 正常监控的等待时间
-	maxFailedAttempts = 3                       // 最大失败次数，超过后才会等待较长时间
-	applog            *mylog.Logger             // 全局日志实例
-)
+var applog *mylog.Logger
 
 const dbFile = "data/posts.db"
 
@@ -45,16 +38,6 @@ func main() {
 	)
 	defer applog.Sync()
 
-	// 日志输出示例
-	applog.Info(
-		"读取的配置\nCookies: %s\n钉钉 Token: %s\n钉钉 Secret: %s\nMonitored Categories: %v\nUser Keywords: %v",
-		cfg.Chiphell.Cookies,
-		cfg.DingTalk.Token,
-		cfg.DingTalk.Secret,
-		cfg.Chiphell.MonitoredCategories,
-		cfg.Chiphell.UserKeywords,
-	)
-
 	db, err := db.InitDB(dbFile, applog)
 	if err != nil {
 		applog.Error("无法初始化数据库", "error", err)
@@ -62,7 +45,15 @@ func main() {
 	}
 	defer db.DB.Close()
 
-	err = db.CreateTableIfNotExists()
+	// 创建每个论坛的表
+	for _, forum := range []string{"chiphell", "nga", "smzdm"} {
+		err := db.CreateTableIfNotExists(forum)
+		if err != nil {
+			applog.Error("无法创建论坛表", "forum", forum, "error", err)
+			return
+		}
+	}
+
 	if err != nil {
 		applog.Error("无法创建表 posts", "error", err)
 		return
@@ -71,20 +62,36 @@ func main() {
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
 
-	chiphellMonitor := monitor.NewChiphellMonitor(
-		cfg.Chiphell.Cookies,
-		cfg.Chiphell.MonitoredCategories,
-		cfg.Chiphell.UserKeywords,
-		dingNotifier,
-		db,
-		applog,
-		cfg.Chiphell.WaitTimeRange, // 从配置中读取等待时间范围
-	)
+	for _, forum := range []string{"chiphell", "nga", "smzdm"} {
+		go func(forum string) {
+			forumConfig, ok := cfg.Forums[forum]
+			if !ok {
+				applog.Error("没有找到 %s 论坛的配置", forum)
+				return
+			}
 
-	for {
-		chiphellMonitor.MonitorPage()
-		// 正常监控的等待时间，随机在 10 到 15 秒之间
-		waitTime := time.Duration(10+rand.Intn(5)) * time.Second
-		time.Sleep(waitTime)
+			monitor := monitor.NewMonitor(
+				forum,
+				forumConfig.Cookies,
+				forumConfig.UserKeywords,
+				dingNotifier,
+				db,
+				applog,
+				struct{ Min, Max int }{
+					Min: forumConfig.WaitTimeRange.Min,
+					Max: forumConfig.WaitTimeRange.Max,
+				},
+			)
+
+			if monitor != nil {
+				for {
+					monitor.MonitorPage()
+					waitTime := time.Duration(10+rand.Intn(5)) * time.Second
+					time.Sleep(waitTime)
+				}
+			}
+		}(forum)
 	}
+
+	select {}
 }
