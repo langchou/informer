@@ -54,11 +54,6 @@ func main() {
 		}
 	}
 
-	if err != nil {
-		applog.Error("无法创建表 posts", "error", err)
-		return
-	}
-
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
 
