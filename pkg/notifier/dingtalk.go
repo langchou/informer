@@ -20,12 +20,12 @@ func NewDingTalkNotifier(token, secret string, logger *mylog.Logger) *DingTalkNo
 	}
 }
 
-func (n *DingTalkNotifier) SendNotification(title, content string, phoneNumber ...string) error {
+func (n *DingTalkNotifier) SendNotification(title, content string, phoneNumbers []string) error {
 	msg := fmt.Sprintf("%s\n%s", title, content)
 	var err error
 
-	if len(phoneNumber) > 0 && phoneNumber[0] != "" {
-		err = n.client.SendTextMessage(msg, dingtalk.WithAtMobiles([]string{phoneNumber[0]}))
+	if len(phoneNumbers) > 0 {
+		err = n.client.SendTextMessage(msg, dingtalk.WithAtMobiles(phoneNumbers))
 	} else {
 		err = n.client.SendTextMessage(msg)
 	}
@@ -41,5 +41,5 @@ func (n *DingTalkNotifier) SendNotification(title, content string, phoneNumber .
 
 func (n *DingTalkNotifier) ReportError(title, content string) {
 	n.logger.Error("错误: %s - %s", title, content)
-	n.SendNotification("监控程序错误: "+title, content)
+	n.SendNotification("监控程序错误: "+title, content, nil)
 }

@@ -33,7 +33,7 @@ type ChiphellMonitor struct {
 type NotificationMessage struct {
 	Title         string
 	Message       string
-	AtPhoneNumber string
+	AtPhoneNumber []string
 }
 
 func NewChiphellMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) *ChiphellMonitor {
@@ -71,11 +71,11 @@ func (c *ChiphellMonitor) processMessageQueue() {
 }
 
 // 将通知消息放入队列
-func (c *ChiphellMonitor) enqueueNotification(title, message, atPhoneNumber string) {
+func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumbers []string) {
 	notification := NotificationMessage{
 		Title:         title,
 		Message:       message,
-		AtPhoneNumber: atPhoneNumber,
+		AtPhoneNumber: atPhoneNumbers,
 	}
 
 	c.MessageQueue <- notification
@@ -134,18 +134,76 @@ func (c *ChiphellMonitor) ParseContent(content string) ([]Post, error) {
 	return posts, nil
 }
 
+func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, string, string, string, error) {
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", postURL, nil)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	req.Header.Set("Cookie", c.Cookies)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", "", "", fmt.Errorf("无效的响应状态码: %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return "", "", "", "", "", fmt.Errorf("解析 HTML 失败: %v", err)
+	}
+
+	// 提取信息
+	var qq, price, tradeRange, address, phone string
+
+	doc.Find(".typeoption tbody").Each(func(i int, s *goquery.Selection) {
+		s.Find("tr").Each(func(i int, tr *goquery.Selection) {
+			th := tr.Find("th").Text()
+			td := tr.Find("td").Text()
+
+			switch th {
+			case "所在地":
+				address = td
+			case "电话":
+				phone = td
+			case "QQ:":
+				qq = td
+			case "价格:":
+				price = td
+			case "交易范围:":
+				tradeRange = td
+			}
+		})
+	})
+
+	return qq, price, tradeRange, address, phone, nil
+}
+
 func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 	for _, post := range posts {
 		postHash := util.HashString(post.Title)
 
 		if c.Database.IsNewPost(c.ForumName, postHash) {
 			c.Database.StorePostHash(c.ForumName, postHash)
-			message := fmt.Sprintf("标题: %s\n链接: %s", post.Title, post.Link)
-
 			c.Logger.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
-			// 将通知加入队列
-			c.enqueueNotification(post.Title, message, "")
+			// 获取主楼内容
+			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
+			if err != nil {
+				c.Logger.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
+				continue
+			}
+
+			message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
+
+			// 收集所有关注该帖子的手机号
+			var phoneNumbers []string
 
 			// 遍历用户的关键词进行匹配
 			for phoneNumber, keywords := range c.UserKeywords {
@@ -153,9 +211,18 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 					lowerKeyword := strings.ToLower(keyword)
 
 					if strings.Contains(strings.ToLower(post.Title), lowerKeyword) {
-						c.enqueueNotification(post.Title, message, phoneNumber)
+						// 如果用户的关键词匹配，则添加手机号到列表
+						phoneNumbers = append(phoneNumbers, phoneNumber)
+						break
 					}
 				}
+			}
+
+			// 如果有匹配的手机号，发送包含所有手机号的通知
+			if len(phoneNumbers) > 0 {
+				c.enqueueNotification(post.Title, message, phoneNumbers)
+			} else {
+				c.enqueueNotification(post.Title, message, nil)
 			}
 		}
 	}
