@@ -177,7 +177,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	}
 
 	// 记录使用的代理 IP
-	c.Logger.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
+	//c.Logger.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
 
 	html, _ := doc.Html()
 	return html, nil
