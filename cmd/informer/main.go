@@ -29,27 +29,28 @@ func main() {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
 
-	applog = mylog.InitLogger(
+	mylog.InitLogger(
 		cfg.LogConfig.File,
 		cfg.LogConfig.MaxSize,
 		cfg.LogConfig.MaxBackups,
 		cfg.LogConfig.MaxAge,
 		cfg.LogConfig.Compress,
 	)
-	defer applog.Sync()
 
-	db, err := db.InitDB(dbFile, applog)
+	defer mylog.Sync()
+
+	db, err := db.InitDB(dbFile)
 	if err != nil {
-		applog.Error("无法初始化数据库", "error", err)
+		mylog.Error("无法初始化数据库", "error", err)
 		return
 	}
 	defer db.DB.Close()
 
 	// 创建每个论坛的表
-	for _, forum := range []string{"chiphell", "nga", "smzdm"} {
+	for _, forum := range []string{"chiphell"} {
 		err := db.CreateTableIfNotExists(forum)
 		if err != nil {
-			applog.Error("无法创建论坛表", "forum", forum, "error", err)
+			mylog.Error("无法创建论坛表", "forum", forum, "error", err)
 			return
 		}
 	}
@@ -61,7 +62,7 @@ func main() {
 		go func(forum string) {
 			forumConfig, ok := cfg.Forums[forum]
 			if !ok {
-				applog.Error("没有找到 %s 论坛的配置", forum)
+				mylog.Error("没有找到 %s 论坛的配置", forum)
 				return
 			}
 
@@ -71,11 +72,11 @@ func main() {
 				forumConfig.UserKeywords,
 				dingNotifier,
 				db,
-				applog,
 				struct{ Min, Max int }{
 					Min: forumConfig.WaitTimeRange.Min,
 					Max: forumConfig.WaitTimeRange.Max,
 				},
+				cfg.ProxyPoolAPI,
 			)
 
 			if monitor != nil {

@@ -3,23 +3,22 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	mylog "github.com/langchou/informer/pkg/log"
 	"time"
 
-	"github.com/langchou/informer/pkg/log"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 type Database struct {
-	DB  *sql.DB
-	Log *log.Logger
+	DB *sql.DB
 }
 
-func InitDB(filepath string, logger *log.Logger) (*Database, error) {
+func InitDB(filepath string) (*Database, error) {
 	db, err := sql.Open("sqlite3", filepath)
 	if err != nil {
 		return nil, err
 	}
-	return &Database{DB: db, Log: logger}, nil
+	return &Database{DB: db}, nil
 }
 
 func (d *Database) CreateTableIfNotExists(forum string) error {
@@ -44,7 +43,7 @@ func (d *Database) IsNewPost(forum, hash string) bool {
 	query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE hash = ?)`, tableName)
 	err := d.DB.QueryRow(query, hash).Scan(&exists)
 	if err != nil {
-		d.Log.Error("数据库查询错误", "error", err)
+		mylog.Error("数据库查询错误", "error", err)
 		return false
 	}
 	return !exists
@@ -55,7 +54,7 @@ func (d *Database) StorePostHash(forum, hash string) {
 	insertQuery := fmt.Sprintf(`INSERT INTO %s (hash) VALUES (?)`, tableName)
 	_, err := d.DB.Exec(insertQuery, hash)
 	if err != nil {
-		d.Log.Error("无法存储帖子哈希", "error", err)
+		mylog.Error("无法存储帖子哈希", "error", err)
 	}
 }
 
@@ -64,6 +63,6 @@ func (d *Database) CleanUpOldPosts(forum string, duration time.Duration) {
 	deleteQuery := fmt.Sprintf(`DELETE FROM %s WHERE timestamp < datetime('now', ?)`, tableName)
 	_, err := d.DB.Exec(deleteQuery, fmt.Sprintf("-%d seconds", int(duration.Seconds())))
 	if err != nil {
-		d.Log.Error("无法清理旧帖子记录", "error", err)
+		mylog.Error("无法清理旧帖子记录", "error", err)
 	}
 }

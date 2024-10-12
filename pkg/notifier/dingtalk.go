@@ -31,15 +31,15 @@ func (n *DingTalkNotifier) SendNotification(title, content string, phoneNumbers 
 	}
 
 	if err != nil {
-		n.logger.Error("发送钉钉通知失败:", err)
+		mylog.Error("发送钉钉通知失败:", err)
 		return err
 	} else {
-		n.logger.Info("钉钉通知发送成功")
+		mylog.Info("钉钉通知发送成功")
 	}
 	return nil
 }
 
 func (n *DingTalkNotifier) ReportError(title, content string) {
-	n.logger.Error("错误: %s - %s", title, content)
+	mylog.Error("错误: %s - %s", title, content)
 	n.SendNotification("监控程序错误: "+title, content, nil)
 }
