@@ -1,15 +1,19 @@
 package monitor
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/langchou/informer/db"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
+	"github.com/langchou/informer/pkg/proxy"
 	"github.com/langchou/informer/pkg/util"
 	"golang.org/x/exp/rand"
 )
@@ -82,8 +86,73 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 }
 
 // 获取页面内容
+// FetchPageContent 使用代理池并发请求访问论坛页面
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
-	client := &http.Client{}
+	proxies, err := proxy.FetchProxies() // 获取代理池中的代理
+	if err != nil {
+		return "", fmt.Errorf("获取代理池失败: %v", err)
+	}
+
+	// 使用 WaitGroup 等待所有并发请求完成
+	var wg sync.WaitGroup
+	ctx, cancel := context.WithCancel(context.Background()) // 用于取消其他goroutines的上下文
+	defer cancel()
+
+	resultCh := make(chan string, 1)        // 用于接收第一个有效响应
+	errCh := make(chan error, len(proxies)) // 用于接收所有错误
+
+	// 并发请求所有代理 IP
+	for _, proxyIP := range proxies {
+		wg.Add(1)
+		go func(proxyIP string) {
+			defer wg.Done()
+			// 检查上下文是否已经取消，如果已取消则退出
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			content, err := c.fetchWithProxy(proxyIP)
+			if err != nil {
+				errCh <- err
+				return
+			}
+
+			// 第一个有效结果，取消其他请求
+			select {
+			case resultCh <- content:
+				cancel() // 成功获取结果，取消其他请求
+			case <-ctx.Done():
+				// 上下文已经取消，不需要处理
+			}
+		}(proxyIP)
+	}
+
+	// 等待所有 goroutines 完成
+	go func() {
+		wg.Wait()
+		close(resultCh)
+		close(errCh)
+	}()
+
+	// 返回第一个成功的结果，或全部失败时重新获取代理池
+	select {
+	case content := <-resultCh:
+		return content, nil
+	case <-time.After(30 * time.Second): // 超时时间为 30 秒，避免所有请求都失败时挂起
+		return "", errors.New("所有代理请求超时或失败")
+	}
+}
+
+func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
+	proxyURL := proxy.ParseProxyURL(proxyIP)
+	client := &http.Client{
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
+	}
+
 	req, err := http.NewRequest("GET", "https://www.chiphell.com/forum-26-1.html", nil)
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %v", err)
@@ -106,6 +175,9 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("解析 HTML 失败: %v", err)
 	}
+
+	// 记录使用的代理 IP
+	c.Logger.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
 
 	html, _ := doc.Html()
 	return html, nil

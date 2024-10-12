@@ -57,7 +57,7 @@ func main() {
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
 
-	for _, forum := range []string{"chiphell", "nga", "smzdm"} {
+	for _, forum := range []string{"chiphell"} {
 		go func(forum string) {
 			forumConfig, ok := cfg.Forums[forum]
 			if !ok {
