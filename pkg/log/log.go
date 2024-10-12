@@ -1,4 +1,4 @@
-package log
+package mylog
 
 import (
 	"log"
@@ -8,13 +8,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+var logger *Logger // 声明全局 logger
+
 type Logger struct {
 	Sugar *zap.SugaredLogger
 }
 
-func InitLogger(logFile string, maxSize, maxBackups, maxAge int, compress bool) *Logger {
+func InitLogger(logFile string, maxSize, maxBackups, maxAge int, compress bool) {
 	// 使用 lumberjack 进行日志轮转配置
-	logger := &lumberjack.Logger{
+	lumberjackLogger := &lumberjack.Logger{
 		Filename:   logFile,
 		MaxSize:    maxSize,    // MB
 		MaxBackups: maxBackups, // 备份的最大数量
@@ -23,7 +25,7 @@ func InitLogger(logFile string, maxSize, maxBackups, maxAge int, compress bool) 
 	}
 
 	// 创建 zap 核心配置
-	writeSyncer := zapcore.AddSync(logger)
+	writeSyncer := zapcore.AddSync(lumberjackLogger)
 	encoderConfig := zap.NewProductionEncoderConfig()
 	encoderConfig.TimeKey = "time"
 	encoderConfig.LevelKey = "level"
@@ -33,22 +35,32 @@ func InitLogger(logFile string, maxSize, maxBackups, maxAge int, compress bool) 
 	core := zapcore.NewCore(zapcore.NewConsoleEncoder(encoderConfig), writeSyncer, zap.InfoLevel)
 	zapLogger := zap.New(core)
 
-	return &Logger{Sugar: zapLogger.Sugar()}
+	// 初始化全局 logger
+	logger = &Logger{Sugar: zapLogger.Sugar()}
 }
 
-// 支持格式化的 Info 方法
-func (l *Logger) Info(format string, args ...interface{}) {
-	l.Sugar.Infof(format, args...)
+// 全局 Info 方法
+func Info(format string, args ...interface{}) {
+	if logger == nil {
+		log.Fatalf("Logger not initialized. Call InitLogger first.")
+	}
+	logger.Sugar.Infof(format, args...)
 }
 
-// 支持格式化的 Error 方法
-func (l *Logger) Error(format string, args ...interface{}) {
-	l.Sugar.Errorf(format, args...)
+// 全局 Error 方法
+func Error(format string, args ...interface{}) {
+	if logger == nil {
+		log.Fatalf("Logger not initialized. Call InitLogger first.")
+	}
+	logger.Sugar.Errorf(format, args...)
 }
 
-func (l *Logger) Sync() {
-	err := l.Sugar.Sync()
-	if err != nil {
-		log.Printf("Error syncing logger: %v", err)
+// 同步日志
+func Sync() {
+	if logger != nil {
+		err := logger.Sugar.Sync()
+		if err != nil {
+			log.Printf("Error syncing logger: %v", err)
+		}
 	}
 }
