@@ -32,6 +32,7 @@ type ChiphellMonitor struct {
 		Min int
 		Max int
 	}
+	ProxyAPI string
 }
 
 type NotificationMessage struct {
@@ -40,16 +41,16 @@ type NotificationMessage struct {
 	AtPhoneNumber []string
 }
 
-func NewChiphellMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) *ChiphellMonitor {
+func NewChiphellMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min, Max int }, proxyAPI string) *ChiphellMonitor {
 	monitor := &ChiphellMonitor{
 		ForumName:     forumName,
 		Cookies:       cookies,
 		UserKeywords:  userKeywords,
 		Notifier:      notifier,
 		Database:      database,
-		Logger:        logger,
 		MessageQueue:  make(chan NotificationMessage, 100), // 创建消息队列，容量100
 		WaitTimeRange: waitTimeRange,
+		ProxyAPI:      proxyAPI,
 	}
 	// 启动 goroutine 处理消息队列
 	go monitor.processMessageQueue()
@@ -65,9 +66,9 @@ func (c *ChiphellMonitor) processMessageQueue() {
 			// 发送消息
 			err := c.Notifier.SendNotification(msg.Title, msg.Message, msg.AtPhoneNumber)
 			if err != nil {
-				c.Logger.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
+				mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
 			} else {
-				c.Logger.Info(fmt.Sprintf("成功发送消息: %s", msg.Message))
+				mylog.Info(fmt.Sprintf("成功发送消息: %s", msg.Message))
 			}
 			time.Sleep(3 * time.Second) // 控制发送频率，每3秒发送一条
 		}
@@ -88,60 +89,66 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 // 获取页面内容
 // FetchPageContent 使用代理池并发请求访问论坛页面
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
-	proxies, err := proxy.FetchProxies() // 获取代理池中的代理
-	if err != nil {
-		return "", fmt.Errorf("获取代理池失败: %v", err)
-	}
+	if c.ProxyAPI != "" {
+		// 使用代理池
+		proxies, err := proxy.FetchProxies(c.ProxyAPI) // 获取代理池中的代理
+		if err != nil {
+			return "", fmt.Errorf("获取代理池失败: %v", err)
+		}
 
-	// 使用 WaitGroup 等待所有并发请求完成
-	var wg sync.WaitGroup
-	ctx, cancel := context.WithCancel(context.Background()) // 用于取消其他goroutines的上下文
-	defer cancel()
+		// 使用 WaitGroup 等待所有并发请求完成
+		var wg sync.WaitGroup
+		ctx, cancel := context.WithCancel(context.Background()) // 用于取消其他goroutines的上下文
+		defer cancel()
 
-	resultCh := make(chan string, 1)        // 用于接收第一个有效响应
-	errCh := make(chan error, len(proxies)) // 用于接收所有错误
+		resultCh := make(chan string, 1)        // 用于接收第一个有效响应
+		errCh := make(chan error, len(proxies)) // 用于接收所有错误
 
-	// 并发请求所有代理 IP
-	for _, proxyIP := range proxies {
-		wg.Add(1)
-		go func(proxyIP string) {
-			defer wg.Done()
-			// 检查上下文是否已经取消，如果已取消则退出
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
+		// 并发请求所有代理 IP
+		for _, proxyIP := range proxies {
+			wg.Add(1)
+			go func(proxyIP string) {
+				defer wg.Done()
+				// 检查上下文是否已经取消，如果已取消则退出
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
 
-			content, err := c.fetchWithProxy(proxyIP)
-			if err != nil {
-				errCh <- err
-				return
-			}
+				content, err := c.fetchWithProxy(proxyIP)
+				if err != nil {
+					errCh <- err
+					return
+				}
 
-			// 第一个有效结果，取消其他请求
-			select {
-			case resultCh <- content:
-				cancel() // 成功获取结果，取消其他请求
-			case <-ctx.Done():
-				// 上下文已经取消，不需要处理
-			}
-		}(proxyIP)
-	}
+				// 第一个有效结果，取消其他请求
+				select {
+				case resultCh <- content:
+					cancel() // 成功获取结果，取消其他请求
+				case <-ctx.Done():
+					// 上下文已经取消，不需要处理
+				}
+			}(proxyIP)
+		}
 
-	// 等待所有 goroutines 完成
-	go func() {
-		wg.Wait()
-		close(resultCh)
-		close(errCh)
-	}()
+		// 等待所有 goroutines 完成
+		go func() {
+			wg.Wait()
+			close(resultCh)
+			close(errCh)
+		}()
 
-	// 返回第一个成功的结果，或全部失败时重新获取代理池
-	select {
-	case content := <-resultCh:
-		return content, nil
-	case <-time.After(30 * time.Second): // 超时时间为 30 秒，避免所有请求都失败时挂起
-		return "", errors.New("所有代理请求超时或失败")
+		// 返回第一个成功的结果，或全部失败时重新获取代理池
+		select {
+		case content := <-resultCh:
+			return content, nil
+		case <-time.After(30 * time.Second): // 超时时间为 30 秒，避免所有请求都失败时挂起
+			return "", errors.New("所有代理请求超时或失败")
+		}
+	} else {
+		// 不使用代理，直接请求 Chiphell
+		return c.fetchWithoutProxy()
 	}
 }
 
@@ -177,7 +184,37 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	}
 
 	// 记录使用的代理 IP
-	//c.Logger.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
+	mylog.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
+
+	html, _ := doc.Html()
+	return html, nil
+}
+
+func (c *ChiphellMonitor) fetchWithoutProxy() (string, error) {
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", "https://www.chiphell.com/forum-26-1.html", nil)
+	if err != nil {
+		return "", fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	req.Header.Set("Cookie", c.Cookies)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("无效的响应状态码: %d", resp.StatusCode)
+	}
+
+	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("解析 HTML 失败: %v", err)
+	}
 
 	html, _ := doc.Html()
 	return html, nil
@@ -263,12 +300,12 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 
 		if c.Database.IsNewPost(c.ForumName, postHash) {
 			c.Database.StorePostHash(c.ForumName, postHash)
-			c.Logger.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
+			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 获取主楼内容
 			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
 			if err != nil {
-				c.Logger.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
+				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
 				continue
 			}
 
@@ -311,15 +348,15 @@ func (c *ChiphellMonitor) MonitorPage() {
 		content, err := c.FetchPageContent()
 		if err != nil {
 			failedAttempts++
-			c.Logger.Error("获取页面内容失败", "error", err)
+			mylog.Error("获取页面内容失败", "error", err)
 			c.Notifier.ReportError("获取页面内容失败", err.Error())
 
 			// 达到最大失败次数时等待较长时间重试
 			if failedAttempts >= maxFailedAttempts {
-				c.Logger.Info(fmt.Sprintf("连续请求失败 %d 次，等待 %v 后重新尝试", failedAttempts, retryWaitTime))
+				mylog.Info(fmt.Sprintf("连续请求失败 %d 次，等待 %v 后重新尝试", failedAttempts, retryWaitTime))
 				time.Sleep(retryWaitTime)
 			} else {
-				c.Logger.Info(fmt.Sprintf("请求失败 %d 次，等待 %v 后重试", failedAttempts, normalWaitTime))
+				mylog.Info(fmt.Sprintf("请求失败 %d 次，等待 %v 后重试", failedAttempts, normalWaitTime))
 				time.Sleep(normalWaitTime)
 			}
 			continue
@@ -330,14 +367,14 @@ func (c *ChiphellMonitor) MonitorPage() {
 
 		posts, err := c.ParseContent(content)
 		if err != nil {
-			c.Logger.Error("解析页面内容失败", "error", err)
+			mylog.Error("解析页面内容失败", "error", err)
 			c.Notifier.ReportError("解析页面内容失败", err.Error())
 			continue
 		}
 
 		err = c.ProcessPosts(posts)
 		if err != nil {
-			c.Logger.Error("处理帖子失败", "error", err)
+			mylog.Error("处理帖子失败", "error", err)
 			c.Notifier.ReportError("处理帖子失败", err.Error())
 		}
 

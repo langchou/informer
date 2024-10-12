@@ -9,15 +9,16 @@ dingtalk:
   token: ""
   secret: ""
 
+proxyPoolAPI: ""
+
 forums:
   chiphell:
     cookies: ""
     userKeyWords:
       "158********":
         - "iphone"
-      "158********":
+      "177********":
         - "iphone"
     waitTimeRange:
       min: 2
       max: 5
-

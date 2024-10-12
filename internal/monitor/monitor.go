@@ -13,10 +13,10 @@ type ForumMonitor interface {
 	MonitorPage()
 }
 
-func NewMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, logger *mylog.Logger, waitTimeRange struct{ Min, Max int }) ForumMonitor {
+func NewMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min, Max int }, proxyapi string) ForumMonitor {
 	switch forumName {
 	case "chiphell":
-		return NewChiphellMonitor(forumName, cookies, userKeywords, notifier, database, logger, waitTimeRange)
+		return NewChiphellMonitor(forumName, cookies, userKeywords, notifier, database, waitTimeRange, proxyapi)
 	case "nga":
 		// TODO
 		return nil
@@ -24,7 +24,7 @@ func NewMonitor(forumName string, cookies string, userKeywords map[string][]stri
 		// TODO
 		return nil
 	default:
-		logger.Error("未知的论坛类型", "forumName", forumName)
+		mylog.Error("未知的论坛类型", "forumName", forumName)
 		return nil
 	}
 }

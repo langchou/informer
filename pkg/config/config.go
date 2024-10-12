@@ -30,9 +30,10 @@ type ForumConfig struct {
 }
 
 type Config struct {
-	LogConfig LogConfig              `yaml:"log"`
-	DingTalk  DingTalkConfig         `yaml:"dingtalk"`
-	Forums    map[string]ForumConfig `yaml:"forums"`
+	LogConfig    LogConfig              `yaml:"log"`
+	DingTalk     DingTalkConfig         `yaml:"dingtalk"`
+	Forums       map[string]ForumConfig `yaml:"forums"`
+	ProxyPoolAPI string                 `yaml:"proxyPoolAPI"`
 }
 
 func InitConfig() (*Config, error) {
