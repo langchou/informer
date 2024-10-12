@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	mylog "github.com/langchou/informer/pkg/log"
 	"golang.org/x/exp/rand"
 	"io/ioutil"
 	"net/http"
@@ -10,13 +11,11 @@ import (
 	"time"
 )
 
-const ProxyAPI = "https://269900.xyz/fetch_http_all?region=cn"
-
 var cachedProxies []string             // 缓存的代理列表
 var lastFetchTime time.Time            // 上次请求代理池的时间
 const cacheDuration = 10 * time.Minute // 缓存时间为10分钟
 
-func FetchProxies() ([]string, error) {
+func FetchProxies(ProxyAPI string) ([]string, error) {
 	now := time.Now()
 	if len(cachedProxies) == 0 || now.Sub(lastFetchTime) > cacheDuration {
 		// 如果缓存为空或缓存过期，重新获取代理
@@ -38,6 +37,7 @@ func FetchProxies() ([]string, error) {
 		// 将响应的内容按逗号分隔，去掉首尾的空白字符
 		cachedProxies = strings.Split(strings.TrimSpace(string(body)), ",")
 		lastFetchTime = now // 更新上次请求时间
+		mylog.Info("Cached proxies: %s", strings.Join(cachedProxies, ", "))
 	}
 
 	// 随机从缓存的代理列表中取出三分之一
