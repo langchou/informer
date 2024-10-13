@@ -35,6 +35,7 @@ func main() {
 		cfg.LogConfig.MaxBackups,
 		cfg.LogConfig.MaxAge,
 		cfg.LogConfig.Compress,
+		cfg.LogConfig.Level,
 	)
 
 	defer mylog.Sync()

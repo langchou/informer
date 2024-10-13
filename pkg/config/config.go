@@ -13,6 +13,7 @@ type LogConfig struct {
 	MaxBackups int    `yaml:"maxBackups"`
 	MaxAge     int    `yaml:"maxAge"`
 	Compress   bool   `yaml:"compress"`
+	Level      string `yaml:"level"`
 }
 
 type DingTalkConfig struct {
@@ -46,7 +47,7 @@ func InitConfig() (*Config, error) {
 		log.Fatalf("无法读取配置文件: %v", err)
 		return nil, err
 	}
-
+	viper.SetDefault("logconfig.level", "info")
 	viper.SetDefault("chiphell.wait_time_range.min", 5)
 	viper.SetDefault("chiphell.wait_time_range.max", 10)
 

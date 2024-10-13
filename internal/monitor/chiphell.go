@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -194,6 +195,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	req.Header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
 	resp, err := client.Do(req)
+
 	if err != nil {
 		return "", fmt.Errorf("请求失败: %v", err)
 	}
@@ -202,6 +204,14 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("无效的响应状态码: %d", resp.StatusCode)
 	}
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	bodyString := string(bodyBytes)
+	mylog.Debug(fmt.Sprintf("请求返回的 body 内容: %s", bodyString))
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
