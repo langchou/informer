@@ -328,13 +328,14 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 获取主楼内容
-			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
-			if err != nil {
-				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
-				continue
-			}
+			//qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
+			//if err != nil {
+			//	mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
+			//	continue
+			//}
 
-			message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
+			//message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
+			message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
 
 			// 收集所有关注该帖子的手机号
 			var phoneNumbers []string
