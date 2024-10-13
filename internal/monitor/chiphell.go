@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -153,11 +154,26 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 }
 
 func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
-	proxyURL := proxy.ParseProxyURL(proxyIP)
-	client := &http.Client{
-		Transport: &http.Transport{
-			Proxy: http.ProxyURL(proxyURL),
+	proxyURL, err := proxy.ParseProxyURL(proxyIP)
+	if err != nil {
+		return "", fmt.Errorf("解析代理 URL 失败: %v", err)
+	}
+	// 自定义 DialContext 以通过代理发送 DNS 查询
+	dialer, err := proxy.SOCKSDialer(proxyURL) // 使用 SOCKS5 代理
+	if err != nil {
+		return "", fmt.Errorf("创建 SOCKS 代理失败: %v", err)
+	}
+
+	// 自定义 Transport 来确保所有流量通过代理
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(proxyURL), // 设置代理
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return dialer.Dial(network, addr) // 手动包装 DialContext
 		},
+	}
+
+	client := &http.Client{
+		Transport: transport,
 	}
 
 	req, err := http.NewRequest("GET", "https://www.chiphell.com/forum-26-1.html", nil)
@@ -167,6 +183,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 
 	req.Header.Set("Cookie", c.Cookies)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	req.Header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
 	resp, err := client.Do(req)
 	if err != nil {
