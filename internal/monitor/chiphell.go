@@ -2,16 +2,15 @@ package monitor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/langchou/informer/db"
+	"github.com/langchou/informer/pkg/fetch"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
 	"github.com/langchou/informer/pkg/proxy"
@@ -20,13 +19,6 @@ import (
 )
 
 var _ ForumMonitor = &ChiphellMonitor{}
-var userAgents = []string{
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
-	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0",
-	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:90.0) Gecko/20100101 Firefox/90.0",
-	"Mozilla/5.0 (iPhone; CPU iPhone OS 14_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
-}
 
 type ChiphellMonitor struct {
 	ForumName     string
@@ -104,56 +96,17 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 			return "", fmt.Errorf("获取代理池失败: %v", err)
 		}
 
-		// 使用 WaitGroup 等待所有并发请求完成
-		var wg sync.WaitGroup
-		ctx, cancel := context.WithCancel(context.Background()) // 用于取消其他goroutines的上下文
-		defer cancel()
-
-		resultCh := make(chan string, 1)        // 用于接收第一个有效响应
-		errCh := make(chan error, len(proxies)) // 用于接收所有错误
-
-		// 并发请求所有代理 IP
-		for _, proxyIP := range proxies {
-			wg.Add(1)
-			go func(proxyIP string) {
-				defer wg.Done()
-				// 检查上下文是否已经取消，如果已取消则退出
-				select {
-				case <-ctx.Done():
-					return
-				default:
-				}
-
-				content, err := c.fetchWithProxy(proxyIP)
-				if err != nil {
-					errCh <- err
-					return
-				}
-
-				// 第一个有效结果，取消其他请求
-				select {
-				case resultCh <- content:
-					cancel() // 成功获取结果，取消其他请求
-				case <-ctx.Done():
-					// 上下文已经取消，不需要处理
-				}
-			}(proxyIP)
+		headers := map[string]string{
+			"Cookie":     c.Cookies,
+			"User-Agent": "Mozilla/5.0",
 		}
 
-		// 等待所有 goroutines 完成
-		go func() {
-			wg.Wait()
-			close(resultCh)
-			close(errCh)
-		}()
-
-		// 返回第一个成功的结果，或全部失败时重新获取代理池
-		select {
-		case content := <-resultCh:
-			return content, nil
-		case <-time.After(30 * time.Second): // 超时时间为 30 秒，避免所有请求都失败时挂起
-			return "", errors.New("所有代理请求超时或失败")
+		// 使用新的 fetch 包的 FetchWithProxies 方法
+		content, err := fetch.FetchWithProxies(proxies, "https://www.chiphell.com/forum-26-1.html", headers)
+		if err != nil {
+			return "", err
 		}
+		return content, nil
 	} else {
 		// 不使用代理，直接请求 Chiphell
 		return c.fetchWithoutProxy()
@@ -189,8 +142,8 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	}
 
 	req.Header.Set("Cookie", c.Cookies)
-	randomUserAgent := userAgents[rand.Intn(len(userAgents))]
-	req.Header.Set("User-Agent", randomUserAgent)
+	// randomUserAgent := userAgents[rand.Intn(len(userAgents))]
+	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
 	resp, err := client.Do(req)
@@ -268,27 +221,26 @@ func (c *ChiphellMonitor) ParseContent(content string) ([]Post, error) {
 	return posts, nil
 }
 
-func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, string, string, string, error) {
-	client := &http.Client{}
-	req, err := http.NewRequest("GET", postURL, nil)
+func (c *ChiphellMonitor) FetchPostMainContent(postURL string, proxies []string) (string, string, string, string, string, error) {
+	headers := map[string]string{
+		"Cookie":     c.Cookies,
+		"User-Agent": "Mozilla/5.0", // 使用固定的 User-Agent
+	}
+
+	// 使用代理并发请求
+	content, err := fetch.FetchWithProxies(proxies, postURL, headers)
 	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("创建请求失败: %v", err)
+		mylog.Error(fmt.Sprintf("请求失败: %v", err))
+		return "", "", "", "", "", err
 	}
 
-	req.Header.Set("Cookie", c.Cookies)
-	req.Header.Set("User-Agent", "Mozilla/5.0")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", "", "", "", "", fmt.Errorf("请求失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return "", "", "", "", "", fmt.Errorf("无效的响应状态码: %d", resp.StatusCode)
+	if len(content) == 0 {
+		return "", "", "", "", "", fmt.Errorf("获取内容失败: 返回内容为空")
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	mylog.Debug(fmt.Sprintf("Fetched content size: %d", len(content)))
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
 		return "", "", "", "", "", fmt.Errorf("解析 HTML 失败: %v", err)
 	}
@@ -296,30 +248,38 @@ func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, 
 	// 提取信息
 	var qq, price, tradeRange, address, phone string
 
-	doc.Find(".typeoption tbody").Each(func(i int, s *goquery.Selection) {
-		s.Find("tr").Each(func(i int, tr *goquery.Selection) {
-			th := tr.Find("th").Text()
-			td := tr.Find("td").Text()
+	// Adjusting the selector to directly target the rows in the table
+	doc.Find(".typeoption tbody tr").Each(func(i int, tr *goquery.Selection) {
+		th := strings.TrimSpace(tr.Find("th").Text())
+		td := strings.TrimSpace(tr.Find("td").Text())
 
-			switch th {
-			case "所在地":
-				address = td
-			case "电话":
-				phone = td
-			case "QQ:":
-				qq = td
-			case "价格:":
-				price = td
-			case "交易范围:":
-				tradeRange = td
-			}
-		})
+		// Log to see what we are finding
+		mylog.Debug(fmt.Sprintf("Found th: '%s', td: '%s'", th, td))
+
+		switch th {
+		case "所在地:":
+			address = td
+		case "电话:":
+			phone = td
+		case "QQ:":
+			qq = td
+		case "价格:":
+			price = td
+		case "交易范围:":
+			tradeRange = td
+		}
 	})
+
+	mylog.Debug(fmt.Sprintf("Parsed qq: %s, price: %s, tradeRange: %s, address: %s, phone: %s", qq, price, tradeRange, address, phone))
 
 	return qq, price, tradeRange, address, phone, nil
 }
 
 func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
+	// proxies, err := proxy.FetchProxies(c.ProxyAPI)
+	// if err != nil {
+	// 	mylog.Error("获取代理池失败: %v", err)
+	// }
 	for _, post := range posts {
 		postHash := util.HashString(post.Title)
 
@@ -328,13 +288,12 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 获取主楼内容
-			//qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
-			//if err != nil {
-			//	mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
-			//	continue
-			//}
-
-			//message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
+			// qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link, proxies)
+			// if err != nil {
+			// mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
+			// continue
+			// }
+			// message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
 			message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
 
 			// 收集所有关注该帖子的手机号
@@ -366,25 +325,12 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 
 func (c *ChiphellMonitor) MonitorPage() {
 	failedAttempts := 0
-	maxFailedAttempts := 3
-	normalWaitTime := 10 * time.Second
-	retryWaitTime := 10 * time.Minute
 
 	for {
 		content, err := c.FetchPageContent()
 		if err != nil {
 			failedAttempts++
 			mylog.Error("获取页面内容失败", "error", err)
-			c.Notifier.ReportError("获取页面内容失败", err.Error())
-
-			// 达到最大失败次数时等待较长时间重试
-			if failedAttempts >= maxFailedAttempts {
-				mylog.Info(fmt.Sprintf("连续请求失败 %d 次，等待 %v 后重新尝试", failedAttempts, retryWaitTime))
-				time.Sleep(retryWaitTime)
-			} else {
-				mylog.Info(fmt.Sprintf("请求失败 %d 次，等待 %v 后重试", failedAttempts, normalWaitTime))
-				time.Sleep(normalWaitTime)
-			}
 			continue
 		}
 
