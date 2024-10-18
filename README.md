@@ -53,6 +53,8 @@ dingtalk:
   token: ""
   secret: ""
 
+proxyPoolAPI: ""   # 代理池api，默认不填写即可
+
 forums:
   chiphell:
     cookies: ""
