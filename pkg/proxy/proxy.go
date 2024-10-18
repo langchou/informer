@@ -3,15 +3,15 @@ package proxy
 import (
 	"context"
 	"fmt"
-	mylog "github.com/langchou/informer/pkg/log"
-	"golang.org/x/exp/rand"
-	"golang.org/x/net/proxy"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	mylog "github.com/langchou/informer/pkg/log"
+	"golang.org/x/net/proxy"
 )
 
 var cachedProxies []string             // 缓存的代理列表
@@ -82,22 +82,7 @@ func FetchProxies(ProxyAPI string) ([]string, error) {
 		mylog.Info("Cached proxies: %s", strings.Join(cachedProxies, ", "))
 	}
 
-	// 随机从缓存的代理列表中取出三分之一
-	randomProxies := getRandomSubset(cachedProxies, len(cachedProxies)/3)
-
-	return randomProxies, nil
-}
-
-func getRandomSubset(proxies []string, count int) []string {
-	rand.Seed(uint64(time.Now().UnixNano()))
-	rand.Shuffle(len(proxies), func(i, j int) {
-		proxies[i], proxies[j] = proxies[j], proxies[i]
-	})
-
-	if count > len(proxies) {
-		count = len(proxies)
-	}
-	return proxies[:count]
+	return cachedProxies, nil
 }
 
 // ParseProxyURL 解析代理 IP 为 URL 格式
