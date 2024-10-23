@@ -17,6 +17,7 @@ import (
 	"github.com/langchou/informer/pkg/proxy"
 	customproxy "golang.org/x/net/proxy"
 	"net/url"
+	"github.com/langchou/informer/pkg/checker"
 )
 
 func CheckIP(proxyIP string) bool {
@@ -70,7 +71,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 	}
 
 	for _, proxyIP := range proxies {
-		if CheckIP(proxyIP) {
+		if checker.CheckIP(proxyIP) {  // 使用 checker.CheckIP
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
 				return content, nil
