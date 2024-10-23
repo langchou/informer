@@ -266,10 +266,6 @@ func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, 
 }
 
 func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
-	// proxies, err := proxy.FetchProxies(c.ProxyAPI)
-	// if err != nil {
-	// 	mylog.Error("获取代理池失败: %v", err)
-	// }
 	for _, post := range posts {
 		postHash := util.HashString(post.Title)
 
@@ -278,39 +274,57 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 获取主楼内容
-			// qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link, proxies)
-			// if err != nil {
-			// mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
-			// continue
-			// }
-			// message := fmt.Sprintf("标题: %s\n链接: %s\nqq:%s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n", post.Title, post.Link, qq, phone, price, address, tradeRange)
-			message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
-
-			// 收集所有关注该帖子的手机号
-			var phoneNumbers []string
-
-			// 遍历用户的关键词进行匹配
-			for phoneNumber, keywords := range c.UserKeywords {
-				for _, keyword := range keywords {
-					lowerKeyword := strings.ToLower(keyword)
-
-					if strings.Contains(strings.ToLower(post.Title), lowerKeyword) {
-						// 如果用户的关键词匹配，则添加手机号到列表
-						phoneNumbers = append(phoneNumbers, phoneNumber)
-						break
-					}
-				}
+			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
+			if err != nil {
+				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
+				// 即使获取主楼内容失败，我们仍然发送基本信息
+				message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
+				c.processNotification(post.Title, message, c.UserKeywords)
+				continue
 			}
 
-			// 如果有匹配的手机号，发送包含所有手机号的通知
-			if len(phoneNumbers) > 0 {
-				c.enqueueNotification(post.Title, message, phoneNumbers)
-			} else {
-				c.enqueueNotification(post.Title, message, nil)
-			}
+			// 构建完整的消息
+			message := fmt.Sprintf(
+				"标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n",
+				post.Title,
+				post.Link,
+				qq,
+				phone,
+				price,
+				address,
+				tradeRange,
+			)
+
+			// 处理通知
+			c.processNotification(post.Title, message, c.UserKeywords)
 		}
 	}
 	return nil
+}
+
+// 新增辅助函数来处理通知逻辑
+func (c *ChiphellMonitor) processNotification(title, message string, userKeywords map[string][]string) {
+	// 收集所有关注该帖子的手机号
+	var phoneNumbers []string
+
+	// 遍历用户的关键词进行匹配
+	for phoneNumber, keywords := range userKeywords {
+		for _, keyword := range keywords {
+			lowerKeyword := strings.ToLower(keyword)
+			if strings.Contains(strings.ToLower(title), lowerKeyword) {
+				// 如果用户的关键词匹配，则添加手机号到列表
+				phoneNumbers = append(phoneNumbers, phoneNumber)
+				break
+			}
+		}
+	}
+
+	// 如果有匹配的手机号，发送包含所有手机号的通知
+	if len(phoneNumbers) > 0 {
+		c.enqueueNotification(title, message, phoneNumbers)
+	} else {
+		c.enqueueNotification(title, message, nil)
+	}
 }
 
 func (c *ChiphellMonitor) MonitorPage() {
