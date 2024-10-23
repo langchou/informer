@@ -71,7 +71,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 	}
 
 	for _, proxyIP := range proxies {
-		if checker.CheckIP(proxyIP) {  // 使用 checker.CheckIP
+		if checker.CheckIP(proxyIP) {
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
 				return content, nil

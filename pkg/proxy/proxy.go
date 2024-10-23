@@ -5,9 +5,10 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/langchou/informer/pkg/checker"  // 使用 checker 包替代 fetch
+	"github.com/langchou/informer/pkg/checker"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/redis"
 )
@@ -16,7 +17,8 @@ const (
 	proxyExpiration = 30 * time.Minute
 	updateInterval  = 5 * time.Minute
 	lastUpdateKey   = "proxy:last_update"
-	checkInterval   = 1 * time.Minute // 定期检查间隔
+	checkInterval   = 1 * time.Minute
+	maxConcurrent   = 10 // 最大并发数
 )
 
 var ProxyAPI string
@@ -24,7 +26,6 @@ var ProxyAPI string
 // SetProxyAPI 设置代理API URL
 func SetProxyAPI(url string) {
 	ProxyAPI = url
-	// 启动定期检查
 	go periodicCheck()
 }
 
@@ -36,7 +37,7 @@ func periodicCheck() {
 	}
 }
 
-// checkAllProxies 检查所有代理IP的有效性
+// checkAllProxies 并行检查所有代理IP的有效性
 func checkAllProxies() {
 	proxies, err := redis.GetProxies()
 	if err != nil {
@@ -44,16 +45,27 @@ func checkAllProxies() {
 		return
 	}
 
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, maxConcurrent)
+
 	for _, proxy := range proxies {
-		if !checker.CheckIP(proxy) {  // 使用 checker.CheckIP
-			err := redis.RemoveProxy(proxy)
-			if err != nil {
-				mylog.Error("移除无效代理失败: %v", err)
-			} else {
-				mylog.Info("移除无效代理: %s", proxy)
+		wg.Add(1)
+		semaphore <- struct{}{}
+		go func(p string) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+			if !checker.CheckIP(p) {
+				err := redis.RemoveProxy(p)
+				if err != nil {
+					mylog.Error("移除无效代理失败: %v", err)
+				} else {
+					mylog.Info("移除无效代理: %s", p)
+				}
 			}
-		}
+		}(proxy)
 	}
+
+	wg.Wait()
 }
 
 func FetchProxies() error {
@@ -88,24 +100,41 @@ func FetchProxies() error {
 	}
 
 	proxies := strings.Split(strings.TrimSpace(string(body)), ",")
-	
-	// 检查并只保存有效的代理
+
+	// 并行检查代理有效性
 	var validProxies []string
+	var mutex sync.Mutex
+	var wg sync.WaitGroup
+	semaphore := make(chan struct{}, maxConcurrent)
+
 	for _, proxy := range proxies {
-		if checker.CheckIP(proxy) {  // 使用 checker.CheckIP
-			validProxies = append(validProxies, proxy)
-			mylog.Info("验证代理有效: %s", proxy)
-		} else {
-			mylog.Info("代理无效，跳过: %s", proxy)
-		}
+		wg.Add(1)
+		semaphore <- struct{}{}
+		go func(p string) {
+			defer wg.Done()
+			defer func() { <-semaphore }()
+			if checker.CheckIP(p) {
+				mutex.Lock()
+				validProxies = append(validProxies, p)
+				mutex.Unlock()
+				mylog.Info("验证代理有效: %s", p)
+			} else {
+				mylog.Info("代理无效，跳过: %s", p)
+			}
+		}(proxy)
 	}
+
+	wg.Wait()
 
 	if len(validProxies) == 0 {
 		return fmt.Errorf("没有找到有效的代理")
 	}
 
-	// 只保存有效的代理
-	err = redis.SetProxies(validProxies, proxyExpiration)
+	// 获取最佳代理
+	bestProxies := checker.GetBestProxies(len(validProxies))
+
+	// 只保存最佳代理
+	err = redis.SetProxies(bestProxies, proxyExpiration)
 	if err != nil {
 		return fmt.Errorf("缓存代理到Redis失败: %v", err)
 	}
@@ -127,8 +156,18 @@ func GetProxies() ([]string, error) {
 		if err := FetchProxies(); err != nil {
 			return nil, err
 		}
-		return redis.GetProxies()
+		proxies, err = redis.GetProxies()
+		if err != nil {
+			return nil, err
+		}
 	}
+
+	// 使用 GetBestProxies 函数获取最佳代理
+	bestProxies := checker.GetBestProxies(5) // 获取前5个最佳代理
+	if len(bestProxies) > 0 {
+		return bestProxies, nil
+	}
+
 	return proxies, nil
 }
 

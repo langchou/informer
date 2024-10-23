@@ -50,10 +50,10 @@ func NewChiphellMonitor(forumName string, cookies string, userKeywords map[strin
 		WaitTimeRange: waitTimeRange,
 		ProxyAPI:      proxyAPI,
 	}
-	
+
 	// 设置 ProxyAPI
 	proxy.SetProxyAPI(proxyAPI)
-	
+
 	// 启动 goroutine 处理消息队列
 	go monitor.processMessageQueue()
 
@@ -93,7 +93,7 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if c.ProxyAPI != "" {
 		// 使用代理池
-		err := proxy.FetchProxies() // 移除参数 c.ProxyAPI
+		err := proxy.FetchProxies()
 		if err != nil {
 			return "", fmt.Errorf("获取代理池失败: %v", err)
 		}
@@ -103,7 +103,6 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 			"User-Agent": "Mozilla/5.0",
 		}
 
-		// 使用新的 fetch 包的 FetchWithProxies 方法
 		content, err := fetch.FetchWithProxies("https://www.chiphell.com/forum-26-1.html", headers)
 		if err != nil {
 			return "", err
@@ -151,7 +150,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 		return "", fmt.Errorf("解析 HTML 失败: %v", err)
 	}
 
-	// 记录使用的代理 IP
+	// 记录使���的代理 IP
 	mylog.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
 
 	html, _ := doc.Html()
