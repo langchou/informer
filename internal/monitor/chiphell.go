@@ -1,9 +1,7 @@
 package monitor
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -52,6 +50,10 @@ func NewChiphellMonitor(forumName string, cookies string, userKeywords map[strin
 		WaitTimeRange: waitTimeRange,
 		ProxyAPI:      proxyAPI,
 	}
+	
+	// 设置 ProxyAPI
+	proxy.SetProxyAPI(proxyAPI)
+	
 	// 启动 goroutine 处理消息队列
 	go monitor.processMessageQueue()
 
@@ -91,7 +93,7 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if c.ProxyAPI != "" {
 		// 使用代理池
-		proxies, err := proxy.FetchProxies(c.ProxyAPI) // 获取代理池中的代理
+		err := proxy.FetchProxies() // 移除参数 c.ProxyAPI
 		if err != nil {
 			return "", fmt.Errorf("获取代理池失败: %v", err)
 		}
@@ -102,7 +104,7 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 		}
 
 		// 使用新的 fetch 包的 FetchWithProxies 方法
-		content, err := fetch.FetchWithProxies(proxies, "https://www.chiphell.com/forum-26-1.html", headers)
+		content, err := fetch.FetchWithProxies("https://www.chiphell.com/forum-26-1.html", headers)
 		if err != nil {
 			return "", err
 		}
@@ -114,26 +116,15 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 }
 
 func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
-	proxyURL, err := proxy.ParseProxyURL(proxyIP)
+	proxyURL, err := fetch.ParseProxyURL(proxyIP)
 	if err != nil {
 		return "", fmt.Errorf("解析代理 URL 失败: %v", err)
 	}
-	// 自定义 DialContext 以通过代理发送 DNS 查询
-	dialer, err := proxy.SOCKSDialer(proxyURL) // 使用 SOCKS5 代理
-	if err != nil {
-		return "", fmt.Errorf("创建 SOCKS 代理失败: %v", err)
-	}
-
-	// 自定义 Transport 来确保所有流量通过代理
-	transport := &http.Transport{
-		Proxy: http.ProxyURL(proxyURL), // 设置代理
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr) // 手动包装 DialContext
-		},
-	}
 
 	client := &http.Client{
-		Transport: transport,
+		Transport: &http.Transport{
+			Proxy: http.ProxyURL(proxyURL),
+		},
 	}
 
 	req, err := http.NewRequest("GET", "https://www.chiphell.com/forum-26-1.html", nil)
@@ -142,7 +133,6 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	}
 
 	req.Header.Set("Cookie", c.Cookies)
-	// randomUserAgent := userAgents[rand.Intn(len(userAgents))]
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	req.Header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 
@@ -221,14 +211,14 @@ func (c *ChiphellMonitor) ParseContent(content string) ([]Post, error) {
 	return posts, nil
 }
 
-func (c *ChiphellMonitor) FetchPostMainContent(postURL string, proxies []string) (string, string, string, string, string, error) {
+func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, string, string, string, error) {
 	headers := map[string]string{
 		"Cookie":     c.Cookies,
 		"User-Agent": "Mozilla/5.0", // 使用固定的 User-Agent
 	}
 
 	// 使用代理并发请求
-	content, err := fetch.FetchWithProxies(proxies, postURL, headers)
+	content, err := fetch.FetchWithProxies(postURL, headers)
 	if err != nil {
 		mylog.Error(fmt.Sprintf("请求失败: %v", err))
 		return "", "", "", "", "", err

@@ -35,6 +35,13 @@ type Config struct {
 	DingTalk     DingTalkConfig         `yaml:"dingtalk"`
 	Forums       map[string]ForumConfig `yaml:"forums"`
 	ProxyPoolAPI string                 `yaml:"proxyPoolAPI"`
+	Redis        RedisConfig            `yaml:"redis"`
+}
+
+type RedisConfig struct {
+	Addr     string `yaml:"addr"`
+	Password string `yaml:"password"`
+	DB       int    `yaml:"db"`
 }
 
 func InitConfig() (*Config, error) {

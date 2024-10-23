@@ -9,6 +9,8 @@ import (
 	"github.com/langchou/informer/pkg/config"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
+	"github.com/langchou/informer/pkg/proxy"
+	"github.com/langchou/informer/pkg/redis"
 	"golang.org/x/exp/rand"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite 驱动
@@ -58,6 +60,20 @@ func main() {
 
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
+
+	// 初始化Redis连接
+	err = redis.InitRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
+	if err != nil {
+		mylog.Error("无法初始化Redis连接", "error", err)
+		return
+	}
+
+	// 在初始化 Redis 连接之后添加
+	proxy.SetProxyAPI(cfg.ProxyPoolAPI)
+	if err := proxy.FetchProxies(); err != nil {
+		mylog.Error("初始化代理列表失败", "error", err)
+		// 考虑是否要在这里 return，取决于代理是否是必需的
+	}
 
 	for _, forum := range []string{"chiphell"} {
 		go func(forum string) {

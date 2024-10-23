@@ -1,108 +1,88 @@
 package proxy
 
 import (
-	"context"
 	"fmt"
 	"io/ioutil"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	mylog "github.com/langchou/informer/pkg/log"
-	"golang.org/x/net/proxy"
+	"github.com/langchou/informer/pkg/redis"
 )
 
-var cachedProxies []string             // 缓存的代理列表
-var lastFetchTime time.Time            // 上次请求代理池的时间
-const cacheDuration = 10 * time.Minute // 缓存时间为10分钟
+const (
+	proxyExpiration = 30 * time.Minute
+	updateInterval  = 5 * time.Minute
+	lastUpdateKey   = "proxy:last_update"
+)
 
-// SOCKSDialer 创建一个通过 SOCKS5 代理的 Dialer
-func SOCKSDialer(proxyURL *url.URL) (proxy.Dialer, error) {
-	// 使用 SOCKS5 代理创建 Dialer
-	dialer, err := proxy.SOCKS5("tcp", proxyURL.Host, nil, proxy.Direct)
+var ProxyAPI string
+
+// SetProxyAPI 设置代理API URL
+func SetProxyAPI(url string) {
+	ProxyAPI = url
+}
+
+func FetchProxies() error {
+	if ProxyAPI == "" {
+		return fmt.Errorf("ProxyAPI URL not set")
+	}
+
+	client := redis.GetClient()
+	ctx := client.Context()
+
+	// 检查是否需要更新代理列表
+	lastUpdate, err := client.Get(ctx, lastUpdateKey).Time()
+	if err == nil && time.Since(lastUpdate) < updateInterval {
+		return nil
+	}
+
+	mylog.Info("Updating proxy list...")
+
+	resp, err := http.Get(ProxyAPI)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("获取代理池失败: %v", err)
 	}
-	return dialer, nil
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("代理池请求返回无效状态码: %d", resp.StatusCode)
+	}
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取代理池响应失败: %v", err)
+	}
+
+	proxies := strings.Split(strings.TrimSpace(string(body)), ",")
+	err = redis.SetProxies(proxies, proxyExpiration)
+	if err != nil {
+		return fmt.Errorf("缓存代理到Redis失败: %v", err)
+	}
+
+	// 更新最后更新时间
+	err = client.Set(ctx, lastUpdateKey, time.Now(), proxyExpiration).Err()
+	if err != nil {
+		return fmt.Errorf("更新最后更新时间失败: %v", err)
+	}
+
+	mylog.Info("成功更新并缓存代理")
+	return nil
 }
 
-// CreateTransport 根据代理 URL 创建 http.Transport
-func CreateTransport(proxyURL *url.URL) (*http.Transport, error) {
-	// 默认的 http.Transport 结构体
-	transport := &http.Transport{}
-
-	if proxyURL.Scheme == "socks5" {
-		// 如果代理是 SOCKS5，创建 SOCKS5 的 Dialer
-		dialer, err := SOCKSDialer(proxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("创建 SOCKS5 Dialer 失败: %v", err)
+func GetProxies() ([]string, error) {
+	proxies, err := redis.GetProxies()
+	if err != nil || len(proxies) == 0 {
+		// 如果 Redis 中没有代理或出错，尝试重新获取
+		if err := FetchProxies(); err != nil {
+			return nil, err
 		}
-		// 使用 SOCKS5 代理的 Dialer
-		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		}
-	} else {
-		// HTTP 代理
-		transport.Proxy = http.ProxyURL(proxyURL)
+		return redis.GetProxies()
 	}
-
-	// 禁用系统的 DNS 解析，确保所有 DNS 查询都通过代理进行
-	transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		// 通过代理地址解析 DNS
-		return net.Dial(network, addr)
-	}
-
-	return transport, nil
+	return proxies, nil
 }
 
-func FetchProxies(ProxyAPI string) ([]string, error) {
-	now := time.Now()
-	if len(cachedProxies) == 0 || now.Sub(lastFetchTime) > cacheDuration {
-		// 如果缓存为空或缓存过期，重新获取代理
-		resp, err := http.Get(ProxyAPI)
-		if err != nil {
-			return nil, fmt.Errorf("获取代理池失败: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("代理池请求返回无效状态码: %d", resp.StatusCode)
-		}
-
-		body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			return nil, fmt.Errorf("读取代理池响应失败: %v", err)
-		}
-
-		// 将响应的内容按逗号分隔，去掉首尾的空白字符
-		cachedProxies = strings.Split(strings.TrimSpace(string(body)), ",")
-		lastFetchTime = now // 更新上次请求时间
-		mylog.Info("Cached proxies: %s", strings.Join(cachedProxies, ", "))
-	}
-
-	return cachedProxies, nil
-}
-
-// ParseProxyURL 解析代理 IP 为 URL 格式
-func ParseProxyURL(proxyIP string) (*url.URL, error) {
-	var proxyURL *url.URL
-	var err error
-
-	if strings.HasPrefix(proxyIP, "socks5://") {
-		// 如果代理是 SOCKS5
-		proxyURL, err = url.Parse(proxyIP)
-		if err != nil {
-			return nil, fmt.Errorf("解析 SOCKS5 代理失败: %v", err)
-		}
-	} else {
-		// 默认为 HTTP 代理
-		proxyURL, err = url.Parse(fmt.Sprintf("http://%s", proxyIP))
-		if err != nil {
-			return nil, fmt.Errorf("解析 HTTP 代理失败: %v", err)
-		}
-	}
-
-	return proxyURL, nil
+func RemoveProxy(proxy string) error {
+	return redis.RemoveProxy(proxy)
 }
