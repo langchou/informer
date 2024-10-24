@@ -19,8 +19,12 @@ FROM ubuntu:22.04
 
 WORKDIR /app
 
-# Install necessary dependencies
-RUN apt-get update && apt-get install -y ca-certificates libc6
+# Install necessary dependencies and set timezone
+RUN apt-get update && apt-get install -y ca-certificates libc6 tzdata && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Copy the Go binary from the build stage
 COPY --from=build /app/informer /app/informer
