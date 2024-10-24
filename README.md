@@ -3,9 +3,42 @@
 
 ## 使用方法
 
-### 使用Docker
+### 使用Docker Compose
 
 创建data/config.yaml文件，并填入对应的内容
+
+```yml
+version: '3'
+services:
+  informer:
+    image: jontyding/informer:latest
+    container_name: informer
+    volumes:
+      - ./data:/app/data
+    restart: always
+    depends_on:
+      - redis
+    networks:
+      - informer-network
+
+  redis:
+    image: redis:latest
+    container_name: informer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: always
+    networks:
+      - informer-network
+
+volumes:
+  redis-data:
+
+networks:
+  informer-network:
+    driver: bridge
+```
 
 ``` yaml
 logconfig:
@@ -14,12 +47,13 @@ logconfig:
   maxBackups: 5
   maxAge: 30
   compress: true
+  level: "info"
 
 dingtalk:
   token: ""
   secret: ""
 
-proxyPoolAPI: ""   # 代理池api，默认不填写即可
+proxyPoolAPI: ""
 
 forums:
   chiphell:
@@ -32,9 +66,15 @@ forums:
     waitTimeRange:
       min: 2
       max: 5
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
+
 ```
 
-`docker run -d --name informer-v ./data:/app/data jontyding/informer:latest`
+`docker-compose up -d`
 
 ### 使用二进制文件
 `wget -O informer https://github.com/langchou/informer/releases/latest/download/informer-linux-amd64 && chmod +x informer`
@@ -48,12 +88,13 @@ logconfig:
   maxBackups: 5
   maxAge: 30
   compress: true
+  level: "info"
 
 dingtalk:
   token: ""
   secret: ""
 
-proxyPoolAPI: ""   # 代理池api，默认不填写即可
+proxyPoolAPI: ""
 
 forums:
   chiphell:
@@ -61,11 +102,16 @@ forums:
     userKeyWords:
       "158********":
         - "iphone"
-      "158********":
+      "177********":
         - "iphone"
     waitTimeRange:
       min: 2
       max: 5
+
+redis:
+  addr: "localhost:6379"
+  password: ""
+  db: 0
 ```
 
 后台运行

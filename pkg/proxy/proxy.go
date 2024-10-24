@@ -1,24 +1,21 @@
 package proxy
 
 import (
+	"context"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/langchou/informer/pkg/checker"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/redis"
 )
 
 const (
 	proxyExpiration = 30 * time.Minute
-	updateInterval  = 5 * time.Minute
+	updateInterval  = 10 * time.Minute // 改为10分钟
 	lastUpdateKey   = "proxy:last_update"
-	checkInterval   = 1 * time.Minute
-	maxConcurrent   = 10 // 最大并发数
 )
 
 var ProxyAPI string
@@ -26,46 +23,6 @@ var ProxyAPI string
 // SetProxyAPI 设置代理API URL
 func SetProxyAPI(url string) {
 	ProxyAPI = url
-	go periodicCheck()
-}
-
-// periodicCheck 定期检查代理IP的有效性
-func periodicCheck() {
-	ticker := time.NewTicker(checkInterval)
-	for range ticker.C {
-		checkAllProxies()
-	}
-}
-
-// checkAllProxies 并行检查所有代理IP的有效性
-func checkAllProxies() {
-	proxies, err := redis.GetProxies()
-	if err != nil {
-		mylog.Error("获取代理列表失败: %v", err)
-		return
-	}
-
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, maxConcurrent)
-
-	for _, proxy := range proxies {
-		wg.Add(1)
-		semaphore <- struct{}{}
-		go func(p string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			if !checker.CheckIP(p) {
-				err := redis.RemoveProxy(p)
-				if err != nil {
-					mylog.Error("移除无效代理失败: %v", err)
-				} else {
-					mylog.Info("移除无效代理: %s", p)
-				}
-			}
-		}(proxy)
-	}
-
-	wg.Wait()
 }
 
 func FetchProxies() error {
@@ -76,15 +33,34 @@ func FetchProxies() error {
 	client := redis.GetClient()
 	ctx := client.Context()
 
+	// 添加超时控制
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
 	// 检查是否需要更新代理列表
 	lastUpdate, err := client.Get(ctx, lastUpdateKey).Time()
 	if err == nil && time.Since(lastUpdate) < updateInterval {
-		return nil
+		// 检查当前是否有可用代理
+		proxies, err := redis.GetProxies()
+		if err == nil && len(proxies) > 0 {
+			// 如果有可用代理且未到更新时间，则不更新
+			return nil
+		}
 	}
 
 	mylog.Info("Updating proxy list...")
 
-	resp, err := http.Get(ProxyAPI)
+	// 创建带超时的 HTTP 客户端
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "GET", ProxyAPI, nil)
+	if err != nil {
+		return fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("获取代理池失败: %v", err)
 	}
@@ -99,42 +75,23 @@ func FetchProxies() error {
 		return fmt.Errorf("读取代理池响应失败: %v", err)
 	}
 
-	proxies := strings.Split(strings.TrimSpace(string(body)), ",")
+	// 清理并分割代理列表
+	rawProxies := strings.Split(strings.TrimSpace(string(body)), ",")
+	var proxies []string
 
-	// 并行检查代理有效性
-	var validProxies []string
-	var mutex sync.Mutex
-	var wg sync.WaitGroup
-	semaphore := make(chan struct{}, maxConcurrent)
-
-	for _, proxy := range proxies {
-		wg.Add(1)
-		semaphore <- struct{}{}
-		go func(p string) {
-			defer wg.Done()
-			defer func() { <-semaphore }()
-			if checker.CheckIP(p) {
-				mutex.Lock()
-				validProxies = append(validProxies, p)
-				mutex.Unlock()
-				mylog.Info("验证代理有效: %s", p)
-			} else {
-				mylog.Info("代理无效，跳过: %s", p)
+	// 清理每个代理地址
+	for _, p := range rawProxies {
+		proxy := strings.TrimSpace(p)
+		if proxy != "" {
+			// 确保代理地址格式正确
+			if !strings.HasPrefix(proxy, "socks5://") {
+				proxy = "socks5://" + proxy
 			}
-		}(proxy)
+			proxies = append(proxies, proxy)
+		}
 	}
 
-	wg.Wait()
-
-	if len(validProxies) == 0 {
-		return fmt.Errorf("没有找到有效的代理")
-	}
-
-	// 获取最佳代理
-	bestProxies := checker.GetBestProxies(len(validProxies))
-
-	// 只保存最佳代理
-	err = redis.SetProxies(bestProxies, proxyExpiration)
+	err = redis.SetProxies(proxies, proxyExpiration)
 	if err != nil {
 		return fmt.Errorf("缓存代理到Redis失败: %v", err)
 	}
@@ -145,7 +102,7 @@ func FetchProxies() error {
 		return fmt.Errorf("更新最后更新时间失败: %v", err)
 	}
 
-	mylog.Info("成功更新并缓存代理，有效代理数量: %d", len(validProxies))
+	mylog.Info("成功更新并缓存代理")
 	return nil
 }
 
@@ -156,18 +113,8 @@ func GetProxies() ([]string, error) {
 		if err := FetchProxies(); err != nil {
 			return nil, err
 		}
-		proxies, err = redis.GetProxies()
-		if err != nil {
-			return nil, err
-		}
+		return redis.GetProxies()
 	}
-
-	// 使用 GetBestProxies 函数获取最佳代理
-	bestProxies := checker.GetBestProxies(5) // 获取前5个最佳代理
-	if len(bestProxies) > 0 {
-		return bestProxies, nil
-	}
-
 	return proxies, nil
 }
 

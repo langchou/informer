@@ -1,0 +1,38 @@
+version: '3'
+services:
+  informer:
+    image: jontyding/informer:latest
+    container_name: informer
+    volumes:
+      - ./data:/app/data
+      - /etc/localtime:/etc/localtime:ro  # 保留这行
+      - /etc/timezone:/etc/timezone:ro    # 保留这行
+    environment:
+      - TZ=Asia/Shanghai
+    restart: always
+    depends_on:
+      - redis
+    networks:
+      - informer-network
+
+  redis:
+    image: redis:latest
+    container_name: informer-redis
+    volumes:
+      - redis-data:/data
+      - /etc/localtime:/etc/localtime:ro  # 保留这行
+      - /etc/timezone:/etc/timezone:ro    # 保留这行
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      - "6379:6379"
+    restart: always
+    networks:
+      - informer-network
+
+volumes:
+  redis-data:
+
+networks:
+  informer-network:
+    driver: bridge

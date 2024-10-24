@@ -93,7 +93,7 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if c.ProxyAPI != "" {
 		// 使用代理池
-		err := proxy.FetchProxies()
+		err := proxy.FetchProxies() // 移除参数 c.ProxyAPI
 		if err != nil {
 			return "", fmt.Errorf("获取代理池失败: %v", err)
 		}
@@ -103,6 +103,7 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 			"User-Agent": "Mozilla/5.0",
 		}
 
+		// 使用新的 fetch 包的 FetchWithProxies 方法
 		content, err := fetch.FetchWithProxies("https://www.chiphell.com/forum-26-1.html", headers)
 		if err != nil {
 			return "", err
@@ -150,7 +151,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 		return "", fmt.Errorf("解析 HTML 失败: %v", err)
 	}
 
-	// 记录使���的代理 IP
+	// 记录使用的代理 IP
 	mylog.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
 
 	html, _ := doc.Html()
@@ -213,21 +214,14 @@ func (c *ChiphellMonitor) ParseContent(content string) ([]Post, error) {
 func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, string, string, string, error) {
 	headers := map[string]string{
 		"Cookie":     c.Cookies,
-		"User-Agent": "Mozilla/5.0", // 使用固定的 User-Agent
+		"User-Agent": "Mozilla/5.0",
 	}
 
-	// 使用代理并发请求
+	// 使用代理池获取主楼内容
 	content, err := fetch.FetchWithProxies(postURL, headers)
 	if err != nil {
-		mylog.Error(fmt.Sprintf("请求失败: %v", err))
-		return "", "", "", "", "", err
+		return "", "", "", "", "", fmt.Errorf("获取主楼内容失败: %v", err)
 	}
-
-	if len(content) == 0 {
-		return "", "", "", "", "", fmt.Errorf("获取内容失败: 返回内容为空")
-	}
-
-	mylog.Debug(fmt.Sprintf("Fetched content size: %d", len(content)))
 
 	doc, err := goquery.NewDocumentFromReader(strings.NewReader(content))
 	if err != nil {
@@ -237,13 +231,10 @@ func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, 
 	// 提取信息
 	var qq, price, tradeRange, address, phone string
 
-	// Adjusting the selector to directly target the rows in the table
+	// 调整选择器以直接定位表格中的行
 	doc.Find(".typeoption tbody tr").Each(func(i int, tr *goquery.Selection) {
 		th := strings.TrimSpace(tr.Find("th").Text())
 		td := strings.TrimSpace(tr.Find("td").Text())
-
-		// Log to see what we are finding
-		mylog.Debug(fmt.Sprintf("Found th: '%s', td: '%s'", th, td))
 
 		switch th {
 		case "所在地:":
@@ -258,8 +249,6 @@ func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, 
 			tradeRange = td
 		}
 	})
-
-	mylog.Debug(fmt.Sprintf("Parsed qq: %s, price: %s, tradeRange: %s, address: %s, phone: %s", qq, price, tradeRange, address, phone))
 
 	return qq, price, tradeRange, address, phone, nil
 }
@@ -276,38 +265,46 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
 			if err != nil {
 				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
-				// 即使获取主楼内容失败，我们仍然发送基本信息
+				// 即使获取主楼失败，也继续处理其他帖子
 				message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
-				c.processNotification(post.Title, message, c.UserKeywords)
+				c.processNotification(post.Title, message)
 				continue
 			}
 
-			// 构建完整的消息
-			message := fmt.Sprintf(
-				"标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s\n",
-				post.Title,
-				post.Link,
-				qq,
-				phone,
-				price,
-				address,
-				tradeRange,
-			)
+			// 构建完整消息
+			message := fmt.Sprintf("标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s",
+				post.Title, post.Link, qq, phone, price, address, tradeRange)
 
-			// 处理通知
-			c.processNotification(post.Title, message, c.UserKeywords)
+			c.processNotification(post.Title, message)
 		}
 	}
 	return nil
 }
 
-// 新增辅助函数来处理通知逻辑
-func (c *ChiphellMonitor) processNotification(title, message string, userKeywords map[string][]string) {
+// 处理通知的辅助方法
+func (c *ChiphellMonitor) processNotification(title, message string) {
+	// 获取当前可用代理数量
+	proxies, err := proxy.GetProxies()
+	proxyCount := 0
+	if err == nil {
+		proxyCount = len(proxies)
+	}
+
+	// 获取当前系统时间
+	currentTime := time.Now().Format("2006-01-02 15:04:05")
+
+	// 在消息末尾添加系统信息
+	messageWithInfo := fmt.Sprintf("%s\n系统信息:\n当前时间: %s\n可用代理数: %d\n",
+		message,
+		currentTime,
+		proxyCount,
+	)
+
 	// 收集所有关注该帖子的手机号
 	var phoneNumbers []string
 
 	// 遍历用户的关键词进行匹配
-	for phoneNumber, keywords := range userKeywords {
+	for phoneNumber, keywords := range c.UserKeywords {
 		for _, keyword := range keywords {
 			lowerKeyword := strings.ToLower(keyword)
 			if strings.Contains(strings.ToLower(title), lowerKeyword) {
@@ -318,11 +315,11 @@ func (c *ChiphellMonitor) processNotification(title, message string, userKeyword
 		}
 	}
 
-	// 如果有匹配的手机号，发送包含所有手机号的通知
+	// 发送通知
 	if len(phoneNumbers) > 0 {
-		c.enqueueNotification(title, message, phoneNumbers)
+		c.enqueueNotification(title, messageWithInfo, phoneNumbers)
 	} else {
-		c.enqueueNotification(title, message, nil)
+		c.enqueueNotification(title, messageWithInfo, nil)
 	}
 }
 

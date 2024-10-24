@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/langchou/informer/db"
@@ -75,8 +77,13 @@ func main() {
 		// 考虑是否要在这里 return，取决于代理是否是必需的
 	}
 
+	var wg sync.WaitGroup
+
 	for _, forum := range []string{"chiphell"} {
+		wg.Add(1)
 		go func(forum string) {
+			defer wg.Done()
+
 			forumConfig, ok := cfg.Forums[forum]
 			if !ok {
 				mylog.Error("没有找到 %s 论坛的配置", forum)
@@ -98,13 +105,17 @@ func main() {
 
 			if monitor != nil {
 				for {
-					monitor.MonitorPage()
+					monitor.MonitorPage() // 移除 err := 因为 MonitorPage() 不返回错误
+
+					// 添加随机等待时间
 					waitTime := time.Duration(10+rand.Intn(5)) * time.Second
+					mylog.Info(fmt.Sprintf("等待 %v 后继续监控", waitTime))
 					time.Sleep(waitTime)
 				}
 			}
 		}(forum)
 	}
 
-	select {}
+	// 等待所有 goroutine 完成
+	wg.Wait()
 }

@@ -13,11 +13,11 @@ import (
 
 	mylog "github.com/langchou/informer/pkg/log"
 
+	"net/url"
+
 	"github.com/PuerkitoBio/goquery"
 	"github.com/langchou/informer/pkg/proxy"
 	customproxy "golang.org/x/net/proxy"
-	"net/url"
-	"github.com/langchou/informer/pkg/checker"
 )
 
 func CheckIP(proxyIP string) bool {
@@ -25,25 +25,26 @@ func CheckIP(proxyIP string) bool {
 	pollURL := "http://ipinfo.io"
 	begin := time.Now()
 
-	dialer, err := customproxy.SOCKS5("tcp", ProcessedProxyIP, nil, customproxy.Direct)
-	if err != nil {
-		return false
-	}
-
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		},
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
-		MaxIdleConnsPerHost: 50,
-	}
-
+	// 减少超时时间
 	client := &http.Client{
-		Timeout:   20 * time.Second,
-		Transport: transport,
+		Timeout: 10 * time.Second, // 从20秒改为10秒
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				// 添加连接超时
+				d := net.Dialer{Timeout: 5 * time.Second}
+				return d.DialContext(ctx, network, addr)
+			},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			// 减少空闲连接数
+			MaxIdleConnsPerHost: 10,
+		},
 	}
 
-	request, err := http.NewRequest("GET", pollURL, nil)
+	// 添加请求上下文超时控制
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	request, err := http.NewRequestWithContext(ctx, "GET", pollURL, nil)
 	if err != nil {
 		return false
 	}
@@ -57,7 +58,7 @@ func CheckIP(proxyIP string) bool {
 
 	if resp.StatusCode == http.StatusOK {
 		duration := time.Since(begin).Milliseconds()
-		mylog.Info("Proxy %s is valid, response time: %d ms", ProcessedProxyIP, duration)
+		mylog.Info(fmt.Sprintf("Proxy %s is valid, response time: %d ms", ProcessedProxyIP, duration))
 		return true
 	}
 
@@ -71,7 +72,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 	}
 
 	for _, proxyIP := range proxies {
-		if checker.CheckIP(proxyIP) {
+		if CheckIP(proxyIP) {
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
 				return content, nil
@@ -86,21 +87,27 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 }
 
 func FetchWithProxy(proxyIP string, targetURL string, headers map[string]string) (string, error) {
+	// 清理代理IP字符串
+	proxyIP = strings.TrimSpace(proxyIP)
+
+	// 解析代理URL
 	proxyURL, err := ParseProxyURL(proxyIP)
 	if err != nil {
 		return "", fmt.Errorf("解析代理 URL 失败: %v", err)
 	}
 
+	// 创建 SOCKS5 拨号器
 	dialer, err := customproxy.SOCKS5("tcp", proxyURL.Host, nil, customproxy.Direct)
 	if err != nil {
 		return "", fmt.Errorf("创建 SOCKS 代理失败: %v", err)
 	}
 
 	transport := &http.Transport{
-		Proxy: http.ProxyURL(proxyURL),
+		// 移除 Proxy 字段，因为我们使用 SOCKS5 拨号器
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		},
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}
 
 	client := &http.Client{
@@ -136,8 +143,13 @@ func FetchWithProxy(proxyIP string, targetURL string, headers map[string]string)
 }
 
 func ParseProxyURL(proxyIP string) (*url.URL, error) {
+	// 清理代理IP字符串中的空白字符
+	proxyIP = strings.TrimSpace(proxyIP)
+
 	if strings.HasPrefix(proxyIP, "socks5://") {
+		// 如果已经是 socks5:// 开头，直接解析
 		return url.Parse(proxyIP)
 	}
-	return url.Parse(fmt.Sprintf("http://%s", proxyIP))
+	// 如果不是 socks5:// 开头，添加前缀
+	return url.Parse("socks5://" + proxyIP)
 }
