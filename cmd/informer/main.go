@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -70,12 +71,16 @@ func main() {
 		return
 	}
 
-	// 在初始化 Redis 连接之后添加
+	// 在初始化 Redis 连接之后修改这部分
 	proxy.SetProxyAPI(cfg.ProxyPoolAPI)
-	if err := proxy.FetchProxies(); err != nil {
-		mylog.Error("初始化代理列表失败", "error", err)
+	if err := proxy.UpdateProxyPool(); err != nil { // 替换 FetchProxies 为 UpdateProxyPool
+		mylog.Error("初始化代理池失败", "error", err)
 		// 考虑是否要在这里 return，取决于代理是否是必需的
 	}
+
+	// 启动代理池管理器
+	ctx := context.Background()
+	go proxy.StartProxyPoolManager(ctx)
 
 	var wg sync.WaitGroup
 

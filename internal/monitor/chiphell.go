@@ -93,9 +93,9 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if c.ProxyAPI != "" {
 		// 使用代理池
-		err := proxy.FetchProxies() // 移除参数 c.ProxyAPI
+		err := proxy.UpdateProxyPool() // 替换 FetchProxies 为 UpdateProxyPool
 		if err != nil {
-			return "", fmt.Errorf("获取代理池失败: %v", err)
+			return "", fmt.Errorf("更新代理池失败: %v", err)
 		}
 
 		headers := map[string]string{
@@ -103,14 +103,12 @@ func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 			"User-Agent": "Mozilla/5.0",
 		}
 
-		// 使用新的 fetch 包的 FetchWithProxies 方法
 		content, err := fetch.FetchWithProxies("https://www.chiphell.com/forum-26-1.html", headers)
 		if err != nil {
 			return "", err
 		}
 		return content, nil
 	} else {
-		// 不使用代理，直接请求 Chiphell
 		return c.fetchWithoutProxy()
 	}
 }
@@ -266,7 +264,7 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			if err != nil {
 				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
 				// 即使获取主楼失败，也继续处理其他帖子
-				message := fmt.Sprintf("标题: %s\n链接: %s\n", post.Title, post.Link)
+				message := fmt.Sprintf("标题: %s\n�����: %s\n", post.Title, post.Link)
 				c.processNotification(post.Title, message)
 				continue
 			}
@@ -284,10 +282,10 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 // 处理通知的辅助方法
 func (c *ChiphellMonitor) processNotification(title, message string) {
 	// 获取当前可用代理数量
-	proxies, err := proxy.GetProxies()
+	count, err := proxy.GetProxyCount() // 通过 proxy 包获取代理数量
 	proxyCount := 0
 	if err == nil {
-		proxyCount = len(proxies)
+		proxyCount = int(count)
 	}
 
 	// 获取当前系统时间
@@ -308,7 +306,6 @@ func (c *ChiphellMonitor) processNotification(title, message string) {
 		for _, keyword := range keywords {
 			lowerKeyword := strings.ToLower(keyword)
 			if strings.Contains(strings.ToLower(title), lowerKeyword) {
-				// 如果用户的关键词匹配，则添加手机号到列表
 				phoneNumbers = append(phoneNumbers, phoneNumber)
 				break
 			}

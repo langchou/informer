@@ -13,9 +13,13 @@ import (
 )
 
 const (
-	proxyExpiration = 30 * time.Minute
-	updateInterval  = 10 * time.Minute // 改为10分钟
-	lastUpdateKey   = "proxy:last_update"
+	MinProxyCount  = 50 // 最小代理数量
+	UpdateInterval = 10 * time.Minute
+	ScoreThreshold = 20.0 // 低于此分数的代理将被删除
+
+	// 分数调整值
+	ScoreDecrease = -10.0 // 代理失败时降低的分数
+	ScoreIncrease = 5.0   // 代理成功时提升的分数
 )
 
 var ProxyAPI string
@@ -25,99 +29,114 @@ func SetProxyAPI(url string) {
 	ProxyAPI = url
 }
 
-func FetchProxies() error {
+// UpdateProxyPool 更新代理池
+func UpdateProxyPool() error {
 	if ProxyAPI == "" {
 		return fmt.Errorf("ProxyAPI URL not set")
 	}
 
-	client := redis.GetClient()
-	ctx := client.Context()
-
-	// 添加超时控制
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// 检查是否需要更新代理列表
-	lastUpdate, err := client.Get(ctx, lastUpdateKey).Time()
-	if err == nil && time.Since(lastUpdate) < updateInterval {
-		// 检查当前是否有可用代理
-		proxies, err := redis.GetProxies()
-		if err == nil && len(proxies) > 0 {
-			// 如果有可用代理且未到更新时间，则不更新
-			return nil
-		}
-	}
-
-	mylog.Info("Updating proxy list...")
-
-	// 创建带超时的 HTTP 客户端
-	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", ProxyAPI, nil)
+	// 获取新代理
+	newProxies, err := fetchNewProxies()
 	if err != nil {
-		return fmt.Errorf("创建请求失败: %v", err)
+		return fmt.Errorf("获取新代理失败: %v", err)
 	}
 
-	resp, err := httpClient.Do(req)
+	// 删除低分代理
+	if err := redis.RemoveLowScoreProxies(ScoreThreshold); err != nil {
+		mylog.Error(fmt.Sprintf("删除低分代理失败: %v", err))
+	}
+
+	// 添加新代理
+	if err := redis.SetProxies(newProxies); err != nil {
+		return fmt.Errorf("添加新代理失败: %v", err)
+	}
+
+	// 检查代理池大小
+	count, err := redis.GetProxyCount()
 	if err != nil {
-		return fmt.Errorf("获取代理池失败: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("代理池请求返回无效状态码: %d", resp.StatusCode)
+		return fmt.Errorf("获取代理数量失败: %v", err)
 	}
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("读取代理池响应失败: %v", err)
-	}
-
-	// 清理并分割代理列表
-	rawProxies := strings.Split(strings.TrimSpace(string(body)), ",")
-	var proxies []string
-
-	// 清理每个代理地址
-	for _, p := range rawProxies {
-		proxy := strings.TrimSpace(p)
-		if proxy != "" {
-			// 确保代理地址格式正确
-			if !strings.HasPrefix(proxy, "socks5://") {
-				proxy = "socks5://" + proxy
-			}
-			proxies = append(proxies, proxy)
-		}
-	}
-
-	err = redis.SetProxies(proxies, proxyExpiration)
-	if err != nil {
-		return fmt.Errorf("缓存代理到Redis失败: %v", err)
-	}
-
-	// 更新最后更新时间
-	err = client.Set(ctx, lastUpdateKey, time.Now(), proxyExpiration).Err()
-	if err != nil {
-		return fmt.Errorf("更新最后更新时间失败: %v", err)
-	}
-
-	mylog.Info("成功更新并缓存代理")
+	mylog.Info(fmt.Sprintf("代理池更新完成，当前代理数量: %d", count))
 	return nil
 }
 
-func GetProxies() ([]string, error) {
-	proxies, err := redis.GetProxies()
-	if err != nil || len(proxies) == 0 {
-		// 如果 Redis 中没有代理或出错，尝试重新获取
-		if err := FetchProxies(); err != nil {
-			return nil, err
-		}
-		return redis.GetProxies()
+// 获取新代理的辅助函数
+func fetchNewProxies() ([]string, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
 	}
-	return proxies, nil
+
+	req, err := http.NewRequest("GET", ProxyAPI, nil)
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %v", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+
+	proxies := strings.Split(strings.TrimSpace(string(body)), ",")
+	var cleanProxies []string
+	for _, p := range proxies {
+		proxy := strings.TrimSpace(p)
+		if proxy != "" {
+			if !strings.HasPrefix(proxy, "socks5://") {
+				proxy = "socks5://" + proxy
+			}
+			cleanProxies = append(cleanProxies, proxy)
+		}
+	}
+
+	return cleanProxies, nil
 }
 
-func RemoveProxy(proxy string) error {
-	return redis.RemoveProxy(proxy)
+// ReportProxySuccess 报告代理使用成功
+func ReportProxySuccess(proxy string) {
+	err := redis.UpdateProxyScore(proxy, ScoreIncrease)
+	if err != nil {
+		mylog.Error(fmt.Sprintf("更新代理分数失败: %v", err))
+	}
+}
+
+// ReportProxyFailure 报告代理使用失败
+func ReportProxyFailure(proxy string) {
+	err := redis.UpdateProxyScore(proxy, ScoreDecrease)
+	if err != nil {
+		mylog.Error(fmt.Sprintf("更新代理分数失败: %v", err))
+	}
+}
+
+// GetBestProxy 获取最佳代���
+func GetBestProxy() (string, error) {
+	return redis.GetTopProxy()
+}
+
+// StartProxyPoolManager 启动代理池管理器
+func StartProxyPoolManager(ctx context.Context) {
+	ticker := time.NewTicker(UpdateInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := UpdateProxyPool(); err != nil {
+				mylog.Error(fmt.Sprintf("更新代理池失败: %v", err))
+			}
+		}
+	}
+}
+
+// GetProxyCount 获取当前代理池中的代理数量
+func GetProxyCount() (int64, error) {
+	return redis.GetProxyCount()
 }
