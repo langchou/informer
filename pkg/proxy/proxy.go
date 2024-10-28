@@ -13,13 +13,7 @@ import (
 )
 
 const (
-	MinProxyCount  = 50 // 最小代理数量
-	UpdateInterval = 10 * time.Minute
-	ScoreThreshold = 20.0 // 低于此分数的代理将被删除
-
-	// 分数调整值
-	ScoreDecrease = -10.0 // 代理失败时降低的分数
-	ScoreIncrease = 5.0   // 代理成功时提升的分数
+	UpdateInterval = 5 * time.Minute // 改为5分钟更新一次
 )
 
 var ProxyAPI string
@@ -41,17 +35,12 @@ func UpdateProxyPool() error {
 		return fmt.Errorf("获取新代理失败: %v", err)
 	}
 
-	// 删除低分代理
-	if err := redis.RemoveLowScoreProxies(ScoreThreshold); err != nil {
-		mylog.Error(fmt.Sprintf("删除低分代理失败: %v", err))
+	// 清空旧代理并添加新代理
+	if err := redis.ReplaceProxies(newProxies); err != nil {
+		return fmt.Errorf("更新代理失败: %v", err)
 	}
 
-	// 添加新代理
-	if err := redis.SetProxies(newProxies); err != nil {
-		return fmt.Errorf("添加新代理失败: %v", err)
-	}
-
-	// 检查代理池大小
+	// 获取当前代理数量用于日志
 	count, err := redis.GetProxyCount()
 	if err != nil {
 		return fmt.Errorf("获取代理数量失败: %v", err)
@@ -98,30 +87,14 @@ func fetchNewProxies() ([]string, error) {
 	return cleanProxies, nil
 }
 
-// ReportProxySuccess 报告代理使用成功
-func ReportProxySuccess(proxy string) {
-	err := redis.UpdateProxyScore(proxy, ScoreIncrease)
-	if err != nil {
-		mylog.Error(fmt.Sprintf("更新代理分数失败: %v", err))
-	}
-}
-
-// ReportProxyFailure 报告代理使用失败
-func ReportProxyFailure(proxy string) {
-	err := redis.UpdateProxyScore(proxy, ScoreDecrease)
-	if err != nil {
-		mylog.Error(fmt.Sprintf("更新代理分数失败: %v", err))
-	}
-}
-
-// GetBestProxy 获取最佳代���
-func GetBestProxy() (string, error) {
-	return redis.GetTopProxy()
+// GetProxy 获取一个代理
+func GetProxy() (string, error) {
+	return redis.GetRandomProxy()
 }
 
 // StartProxyPoolManager 启动代理池管理器
 func StartProxyPoolManager(ctx context.Context) {
-	ticker := time.NewTicker(UpdateInterval)
+	ticker := time.NewTicker(UpdateInterval) // 每5分钟更新一次
 	defer ticker.Stop()
 
 	for {

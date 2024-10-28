@@ -59,30 +59,23 @@ func CheckIP(proxyIP string) bool {
 	if resp.StatusCode == http.StatusOK {
 		duration := time.Since(begin).Milliseconds()
 		mylog.Info(fmt.Sprintf("Proxy %s is valid, response time: %d ms", ProcessedProxyIP, duration))
-		// 报告代理成功
-		proxy.ReportProxySuccess(proxyIP)
 		return true
 	}
 
-	// 报告代理失败
-	proxy.ReportProxyFailure(proxyIP)
 	return false
 }
 
 func FetchWithProxies(targetURL string, headers map[string]string) (string, error) {
 	maxRetries := 3
 	for i := 0; i < maxRetries; i++ {
-		// 获取最佳代理
-		proxyIP, err := proxy.GetBestProxy()
+		proxyIP, err := proxy.GetProxy()
 		if err != nil {
 			return "", fmt.Errorf("获取代理失败: %v", err)
 		}
 
 		if proxyIP == "" {
-			// 如果没有可用代理，尝试更新代理池
-			if err := proxy.UpdateProxyPool(); err != nil {
-				return "", fmt.Errorf("更新代理池失败: %v", err)
-			}
+			// 如果没有可用代理，等待下一次重试
+			time.Sleep(time.Second) // 可选的短暂等待
 			continue
 		}
 
@@ -90,11 +83,9 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 		if CheckIP(proxyIP) {
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
-				proxy.ReportProxySuccess(proxyIP)
 				return content, nil
+				mylog.Error(fmt.Sprintf("使用代理 %s 请求失败: %v", proxyIP, err))
 			}
-			proxy.ReportProxyFailure(proxyIP)
-			mylog.Error(fmt.Sprintf("使用代理 %s 请求失败: %v", proxyIP, err))
 		}
 	}
 

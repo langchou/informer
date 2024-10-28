@@ -92,12 +92,6 @@ func (c *ChiphellMonitor) enqueueNotification(title, message string, atPhoneNumb
 // FetchPageContent 使用代理池并发请求访问论坛页面
 func (c *ChiphellMonitor) FetchPageContent() (string, error) {
 	if c.ProxyAPI != "" {
-		// 使用代理池
-		err := proxy.UpdateProxyPool() // 替换 FetchProxies 为 UpdateProxyPool
-		if err != nil {
-			return "", fmt.Errorf("更新代理池失败: %v", err)
-		}
-
 		headers := map[string]string{
 			"Cookie":     c.Cookies,
 			"User-Agent": "Mozilla/5.0",
@@ -264,7 +258,7 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			if err != nil {
 				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
 				// 即使获取主楼失败，也继续处理其他帖子
-				message := fmt.Sprintf("标题: %s\n�����: %s\n", post.Title, post.Link)
+				message := fmt.Sprintf("标题: %s\n: %s\n", post.Title, post.Link)
 				c.processNotification(post.Title, message)
 				continue
 			}

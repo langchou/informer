@@ -71,14 +71,16 @@ func main() {
 		return
 	}
 
-	// 在初始化 Redis 连接之后修改这部分
+	// 设置 ProxyAPI
 	proxy.SetProxyAPI(cfg.ProxyPoolAPI)
-	if err := proxy.UpdateProxyPool(); err != nil { // 替换 FetchProxies 为 UpdateProxyPool
+
+	// 初始化时更新一次代理池
+	if err := proxy.UpdateProxyPool(); err != nil {
 		mylog.Error("初始化代理池失败", "error", err)
-		// 考虑是否要在这里 return，取决于代理是否是必需的
+		// 不要在这里 return，继续运行程序
 	}
 
-	// 启动代理池管理器
+	// 启动代理池管理器 - 这是唯一应该定期更新代理池的地方
 	ctx := context.Background()
 	go proxy.StartProxyPoolManager(ctx)
 
@@ -110,8 +112,7 @@ func main() {
 
 			if monitor != nil {
 				for {
-					monitor.MonitorPage() // 移除 err := 因为 MonitorPage() 不返回错误
-
+					monitor.MonitorPage()
 					// 添加随机等待时间
 					waitTime := time.Duration(10+rand.Intn(5)) * time.Second
 					mylog.Info(fmt.Sprintf("等待 %v 后继续监控", waitTime))
