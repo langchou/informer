@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/langchou/informer/pkg/checker"
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/redis"
 )
 
 const (
-	UpdateInterval = 5 * time.Minute // 改为5分钟更新一次
+	UpdateInterval = 5 * time.Minute // 代理池更新间隔
+	CheckInterval  = 1 * time.Minute // IP检测间隔
 )
 
 var ProxyAPI string
@@ -21,6 +23,47 @@ var ProxyAPI string
 // SetProxyAPI 设置代理API URL
 func SetProxyAPI(url string) {
 	ProxyAPI = url
+}
+
+// StartIPChecker 启动IP检测器
+func StartIPChecker(ctx context.Context) {
+	ticker := time.NewTicker(CheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			checkAllProxies()
+		}
+	}
+}
+
+// checkAllProxies 检查所有代理的可用性
+func checkAllProxies() {
+	proxies, err := redis.GetAllProxies()
+	if err != nil {
+		mylog.Error(fmt.Sprintf("获取代理列表失败: %v", err))
+		return
+	}
+
+	// 检查每个代理
+	for _, proxyIP := range proxies {
+		valid, responseTime := checker.CheckIP(proxyIP)
+		if valid {
+			// 如果代理可用，添加到优选列表
+			if err := redis.AddPreferredProxy(proxyIP, responseTime); err != nil {
+				mylog.Error(fmt.Sprintf("添加优选代理失败: %v", err))
+			} else {
+				mylog.Debug(fmt.Sprintf("添加新的优选代理: %s, 响应时间: %.2fms", proxyIP, responseTime))
+			}
+		}
+	}
+
+	// 获取优选代理数量并记录日志
+	count, _ := redis.GetPreferredProxyCount()
+	mylog.Info(fmt.Sprintf("IP检测完成，当前优选代理数量: %d", count))
 }
 
 // UpdateProxyPool 更新代理池

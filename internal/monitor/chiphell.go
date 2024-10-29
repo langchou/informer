@@ -12,6 +12,7 @@ import (
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
 	"github.com/langchou/informer/pkg/proxy"
+	"github.com/langchou/informer/pkg/redis"
 	"github.com/langchou/informer/pkg/util"
 	"golang.org/x/exp/rand"
 )
@@ -60,19 +61,55 @@ func NewChiphellMonitor(forumName string, cookies string, userKeywords map[strin
 	return monitor
 }
 
-// 消息队列的处理函数，每3秒发送一条消息
+// 修改消息队列的处理函数，批量处理消息
 func (c *ChiphellMonitor) processMessageQueue() {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	var messages []NotificationMessage
 	for {
 		select {
 		case msg := <-c.MessageQueue:
-			// 发送消息
-			err := c.Notifier.SendNotification(msg.Title, msg.Message, msg.AtPhoneNumber)
-			if err != nil {
-				mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
-			} else {
-				mylog.Info(fmt.Sprintf("成功发送消息: %s", msg.Message))
+			messages = append(messages, msg)
+		case <-ticker.C:
+			if len(messages) > 0 {
+				// 批量发送所有积累的消息
+				var combinedMessage strings.Builder
+				var allPhoneNumbers []string
+				phoneNumbersMap := make(map[string]bool)
+
+				for i, msg := range messages {
+					// 添加分隔线
+					if i > 0 {
+						combinedMessage.WriteString("\n----------------------------------------\n")
+					}
+					combinedMessage.WriteString(fmt.Sprintf("%s\n%s", msg.Title, msg.Message))
+
+					// 收集所有需要@的手机号，去重
+					for _, phone := range msg.AtPhoneNumber {
+						if !phoneNumbersMap[phone] {
+							phoneNumbersMap[phone] = true
+							allPhoneNumbers = append(allPhoneNumbers, phone)
+						}
+					}
+				}
+
+				// 发送合并后的消息
+				err := c.Notifier.SendNotification(
+					fmt.Sprintf("新帖子通知 (共%d条)", len(messages)),
+					combinedMessage.String(),
+					allPhoneNumbers,
+				)
+
+				if err != nil {
+					mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
+				} else {
+					mylog.Info(fmt.Sprintf("成功发送%d条合并消息", len(messages)))
+				}
+
+				// 清空消息列表
+				messages = nil
 			}
-			time.Sleep(3 * time.Second) // 控制发送频率，每3秒发送一条
 		}
 	}
 }
@@ -276,20 +313,28 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 // 处理通知的辅助方法
 func (c *ChiphellMonitor) processNotification(title, message string) {
 	// 获取当前可用代理数量
-	count, err := proxy.GetProxyCount() // 通过 proxy 包获取代理数量
+	count, err := proxy.GetProxyCount()
 	proxyCount := 0
 	if err == nil {
 		proxyCount = int(count)
+	}
+
+	// 获取优选代理数量
+	preferredCount, err := redis.GetPreferredProxyCount()
+	preferredProxyCount := 0
+	if err == nil {
+		preferredProxyCount = int(preferredCount)
 	}
 
 	// 获取当前系统时间
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
 
 	// 在消息末尾添加系统信息
-	messageWithInfo := fmt.Sprintf("%s\n系统信息:\n当前时间: %s\n可用代理数: %d\n",
+	messageWithInfo := fmt.Sprintf("%s\n系统信息:\n当前时间: %s\n可用代理数: %d\n优选代理数: %d\n",
 		message,
 		currentTime,
 		proxyCount,
+		preferredProxyCount,
 	)
 
 	// 收集所有关注该帖子的手机号
@@ -341,7 +386,7 @@ func (c *ChiphellMonitor) MonitorPage() {
 			c.Notifier.ReportError("处理帖子失败", err.Error())
 		}
 
-		// 正常处理完毕，等待一段时间后再进行下一次监控
+		// 正常处理完毕，等待一段时间后再进行一次监控
 		waitTime := time.Duration(c.WaitTimeRange.Min+rand.Intn(c.WaitTimeRange.Max-c.WaitTimeRange.Min+1)) * time.Second
 		time.Sleep(waitTime)
 

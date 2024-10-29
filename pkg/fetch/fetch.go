@@ -12,79 +12,77 @@ import (
 	"time"
 
 	mylog "github.com/langchou/informer/pkg/log"
+	"github.com/langchou/informer/pkg/proxy"
 
 	"net/url"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/langchou/informer/pkg/proxy"
+	"github.com/langchou/informer/pkg/checker"
+	"github.com/langchou/informer/pkg/redis"
 	customproxy "golang.org/x/net/proxy"
 )
 
-func CheckIP(proxyIP string) bool {
-	ProcessedProxyIP := strings.Replace(proxyIP, "socks5://", "", 1)
-	pollURL := "http://ipinfo.io"
-	begin := time.Now()
-
-	// 减少超时时间
-	client := &http.Client{
-		Timeout: 10 * time.Second, // 从20秒改为10秒
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// 添加连接超时
-				d := net.Dialer{Timeout: 5 * time.Second}
-				return d.DialContext(ctx, network, addr)
-			},
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			// 减少空闲连接数
-			MaxIdleConnsPerHost: 10,
-		},
-	}
-
-	// 添加请求上下文超时控制
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	request, err := http.NewRequestWithContext(ctx, "GET", pollURL, nil)
-	if err != nil {
-		return false
-	}
-	request.Header.Add("accept", "text/plain")
-
-	resp, err := client.Do(request)
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusOK {
-		duration := time.Since(begin).Milliseconds()
-		mylog.Info(fmt.Sprintf("Proxy %s is valid, response time: %d ms", ProcessedProxyIP, duration))
-		return true
-	}
-
-	return false
-}
-
 func FetchWithProxies(targetURL string, headers map[string]string) (string, error) {
-	maxRetries := 3
-	for i := 0; i < maxRetries; i++ {
-		proxyIP, err := proxy.GetProxy()
+	// 首先尝试使用优选代理
+	preferredProxies, err := redis.GetPreferredProxies() // 获取所有优选代理
+	if err == nil && len(preferredProxies) > 0 {
+		// 依次尝试每个优选代理
+		for _, proxyIP := range preferredProxies {
+			content, err := FetchWithProxy(proxyIP, targetURL, headers)
+			if err == nil {
+				mylog.Info(fmt.Sprintf("使用优选代理 %s 请求成功, 可用优选代理数: %d", proxyIP, len(preferredProxies)))
+				return content, nil
+			} else {
+				mylog.Error(fmt.Sprintf("使用优选代理 %s 请求失败: %v", proxyIP, err))
+				// 从优选列表和普通列表中删除失效的代理
+				if err := redis.RemovePreferredProxy(proxyIP); err != nil {
+					mylog.Error(fmt.Sprintf("从优选列表删除代理失败: %v", err))
+				}
+				if err := redis.RemoveProxy(proxyIP); err != nil {
+					mylog.Error(fmt.Sprintf("从代理池删除代理失败: %v", err))
+				}
+				// 继续尝试下一个优选代理
+				continue
+			}
+		}
+	}
+
+	// 如果所有优选代理都失败了，使用普通代理
+	maxRetries, err := proxy.GetProxyCount()
+	if err != nil {
+		return "", fmt.Errorf("获取代理数量失败: %v", err)
+	}
+
+	for i := 0; i < int(maxRetries); i++ {
+		proxyIP, err := redis.GetRandomProxy()
 		if err != nil {
 			return "", fmt.Errorf("获取代理失败: %v", err)
 		}
 
 		if proxyIP == "" {
-			// 如果没有可用代理，等待下一次重试
-			time.Sleep(time.Second) // 可选的短暂等待
+			time.Sleep(time.Second)
 			continue
 		}
 
-		// 检查代理是否可用
-		if CheckIP(proxyIP) {
+		// 修复：正确处理 CheckIP 的两个返回值
+		valid, responseTime := checker.CheckIP(proxyIP)
+		if valid {
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
+				// 请求成功，将该代理添加到优选列表，传入响应时间
+				if err := redis.AddPreferredProxy(proxyIP, responseTime); err != nil {
+					mylog.Error(fmt.Sprintf("添加优选代理失败: %v", err))
+				} else {
+					mylog.Debug(fmt.Sprintf("添加新的优选代理: %s, 响应时间: %.2fms", proxyIP, responseTime))
+				}
 				return content, nil
+			} else {
 				mylog.Error(fmt.Sprintf("使用代理 %s 请求失败: %v", proxyIP, err))
+				if err := redis.RemoveProxy(proxyIP); err != nil {
+					mylog.Error(fmt.Sprintf("删除失效代理失败: %v", err))
+				} else {
+					mylog.Info(fmt.Sprintf("已删除失效代理: %s, 剩余代理数量: %d", proxyIP, maxRetries-int64(i)-1))
+				}
 			}
 		}
 	}
@@ -118,7 +116,7 @@ func FetchWithProxy(proxyIP string, targetURL string, headers map[string]string)
 
 	client := &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout:   5 * time.Second,
 	}
 
 	req, err := http.NewRequest("GET", targetURL, nil)

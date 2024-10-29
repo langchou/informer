@@ -84,6 +84,9 @@ func main() {
 	ctx := context.Background()
 	go proxy.StartProxyPoolManager(ctx)
 
+	// 启动IP检测器
+	go proxy.StartIPChecker(ctx)
+
 	var wg sync.WaitGroup
 
 	for _, forum := range []string{"chiphell"} {
