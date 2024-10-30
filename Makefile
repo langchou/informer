@@ -21,4 +21,10 @@ clean:
 	@echo "Cleaning up build files..."
 	rm -rf $(BUILD_DIR)
 
+run:
+	make clean
+	make build
+	@echo "Running informer..."
+	./$(BUILD_DIR)/$(BINARY_NAME)
+
 default: build

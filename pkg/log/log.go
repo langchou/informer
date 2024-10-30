@@ -71,6 +71,14 @@ func Info(format string, args ...interface{}) {
 	logger.Sugar.Infof(format, args...)
 }
 
+// 全局 Warn 方法
+func Warn(format string, args ...interface{}) {
+	if logger == nil {
+		log.Fatalf("Logger not initialized. Call InitLogger first.")
+	}
+	logger.Sugar.Warnf(format, args...)
+}
+
 // 全局 Error 方法
 func Error(format string, args ...interface{}) {
 	if logger == nil {

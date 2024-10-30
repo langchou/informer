@@ -33,7 +33,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 				mylog.Debug(fmt.Sprintf("使用优选代理 %s 请求成功, 可用优选代理数: %d", proxyIP, len(preferredProxies)))
 				return content, nil
 			} else {
-				mylog.Error(fmt.Sprintf("使用优选代理 %s 请求失败: %v", proxyIP, err))
+				mylog.Warn(fmt.Sprintf("使用优选代理 %s 请求失败: %v", proxyIP, err))
 				// 从优选列表和普通列表中删除失效的代理
 				if err := redis.RemovePreferredProxy(proxyIP); err != nil {
 					mylog.Error(fmt.Sprintf("从优选列表删除代理失败: %v", err))
@@ -77,7 +77,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 				}
 				return content, nil
 			} else {
-				mylog.Error(fmt.Sprintf("使用代理 %s 请求失败: %v", proxyIP, err))
+				mylog.Warn(fmt.Sprintf("使用代理 %s 请求失败: %v", proxyIP, err))
 				if err := redis.RemoveProxy(proxyIP); err != nil {
 					mylog.Error(fmt.Sprintf("删除失效代理失败: %v", err))
 				} else {

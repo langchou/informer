@@ -15,7 +15,7 @@ import (
 
 const (
 	UpdateInterval = 5 * time.Minute // 代理池更新间隔
-	CheckInterval  = 1 * time.Minute // IP检测间隔
+	CheckInterval  = 5 * time.Minute // 改为10分钟检测一次
 )
 
 var ProxyAPI string
@@ -42,13 +42,23 @@ func StartIPChecker(ctx context.Context) {
 
 // checkAllProxies 检查所有代理的可用性
 func checkAllProxies() {
+	// 获取当前优选代理数量
+	preferredCount, err := redis.GetPreferredProxyCount()
+	if err == nil && preferredCount > 0 {
+		mylog.Info(fmt.Sprintf("当前优选代理数量充足: %d，跳过检测", preferredCount))
+		return
+	}
+
 	proxies, err := redis.GetAllProxies()
 	if err != nil {
 		mylog.Error(fmt.Sprintf("获取代理列表失败: %v", err))
 		return
 	}
 
+	mylog.Info(fmt.Sprintf("开始检测代理池中的IP，共 %d 个代理", len(proxies)))
+
 	// 检查每个代理
+	checkedCount := 0
 	for _, proxyIP := range proxies {
 		valid, responseTime := checker.CheckIP(proxyIP)
 		if valid {
@@ -57,7 +67,14 @@ func checkAllProxies() {
 				mylog.Error(fmt.Sprintf("添加优选代理失败: %v", err))
 			} else {
 				mylog.Debug(fmt.Sprintf("添加新的优选代理: %s, 响应时间: %.2fms", proxyIP, responseTime))
+				checkedCount++
 			}
+		}
+
+		// 如果已经找到足够的优选代理，就停止检测
+		if checkedCount >= 10 {
+			mylog.Info("已找到足够的优选代理，停止检测")
+			break
 		}
 	}
 
