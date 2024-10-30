@@ -30,7 +30,7 @@ func FetchWithProxies(targetURL string, headers map[string]string) (string, erro
 		for _, proxyIP := range preferredProxies {
 			content, err := FetchWithProxy(proxyIP, targetURL, headers)
 			if err == nil {
-				mylog.Info(fmt.Sprintf("使用优选代理 %s 请求成功, 可用优选代理数: %d", proxyIP, len(preferredProxies)))
+				mylog.Debug(fmt.Sprintf("使用优选代理 %s 请求成功, 可用优选代理数: %d", proxyIP, len(preferredProxies)))
 				return content, nil
 			} else {
 				mylog.Error(fmt.Sprintf("使用优选代理 %s 请求失败: %v", proxyIP, err))

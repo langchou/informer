@@ -118,7 +118,7 @@ func main() {
 					monitor.MonitorPage()
 					// 添加随机等待时间
 					waitTime := time.Duration(10+rand.Intn(5)) * time.Second
-					mylog.Info(fmt.Sprintf("等待 %v 后继续监控", waitTime))
+					mylog.Debug(fmt.Sprintf("等待 %v 后继续监控", waitTime))
 					time.Sleep(waitTime)
 				}
 			}

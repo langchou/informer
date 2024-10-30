@@ -26,7 +26,7 @@ func (d *Database) CreateTableIfNotExists(forum string) error {
 	createTableQuery := fmt.Sprintf(`
 	CREATE TABLE IF NOT EXISTS %s (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		hash TEXT NOT NULL UNIQUE,
+		post_id TEXT NOT NULL UNIQUE,
 		timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 	);`, tableName)
 
@@ -37,11 +37,11 @@ func (d *Database) CreateTableIfNotExists(forum string) error {
 	return nil
 }
 
-func (d *Database) IsNewPost(forum, hash string) bool {
+func (d *Database) IsNewPost(forum, postID string) bool {
 	tableName := fmt.Sprintf("%s_posts", forum)
 	var exists bool
-	query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE hash = ?)`, tableName)
-	err := d.DB.QueryRow(query, hash).Scan(&exists)
+	query := fmt.Sprintf(`SELECT EXISTS(SELECT 1 FROM %s WHERE post_id = ?)`, tableName)
+	err := d.DB.QueryRow(query, postID).Scan(&exists)
 	if err != nil {
 		mylog.Error("数据库查询错误", "error", err)
 		return false
@@ -49,12 +49,12 @@ func (d *Database) IsNewPost(forum, hash string) bool {
 	return !exists
 }
 
-func (d *Database) StorePostHash(forum, hash string) {
+func (d *Database) StorePostID(forum, postID string) {
 	tableName := fmt.Sprintf("%s_posts", forum)
-	insertQuery := fmt.Sprintf(`INSERT INTO %s (hash) VALUES (?)`, tableName)
-	_, err := d.DB.Exec(insertQuery, hash)
+	insertQuery := fmt.Sprintf(`INSERT INTO %s (post_id) VALUES (?)`, tableName)
+	_, err := d.DB.Exec(insertQuery, postID)
 	if err != nil {
-		mylog.Error("无法存储帖子哈希", "error", err)
+		mylog.Error("无法存储帖子ID", "error", err)
 	}
 }
 

@@ -36,7 +36,7 @@ func InitRedis(addr string, password string, db int) error {
 		mylog.Error(fmt.Sprintf("清理优选代理失败: %v", err))
 	}
 
-	mylog.Info("Successfully connected to Redis")
+	mylog.Info("成功连接Redis")
 	return nil
 }
 

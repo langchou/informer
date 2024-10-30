@@ -85,7 +85,7 @@ func (n *DingTalkNotifier) processMessages() {
 		if err != nil {
 			mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
 		} else {
-			mylog.Info("钉钉通知发送成功")
+			mylog.Debug("钉钉通知发送成功")
 		}
 	}
 }

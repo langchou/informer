@@ -13,7 +13,6 @@ import (
 	"github.com/langchou/informer/pkg/notifier"
 	"github.com/langchou/informer/pkg/proxy"
 	"github.com/langchou/informer/pkg/redis"
-	"github.com/langchou/informer/pkg/util"
 	"golang.org/x/exp/rand"
 )
 
@@ -104,7 +103,7 @@ func (c *ChiphellMonitor) processMessageQueue() {
 				if err != nil {
 					mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
 				} else {
-					mylog.Info(fmt.Sprintf("成功发送%d条合并消息", len(messages)))
+					mylog.Debug(fmt.Sprintf("成功发送%d条合并消息", len(messages)))
 				}
 
 				// 清空消息列表
@@ -181,7 +180,7 @@ func (c *ChiphellMonitor) fetchWithProxy(proxyIP string) (string, error) {
 	}
 
 	// 记录使用的代理 IP
-	mylog.Info(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
+	mylog.Debug(fmt.Sprintf("成功使用代理 IP: %s", proxyIP))
 
 	html, _ := doc.Html()
 	return html, nil
@@ -284,10 +283,11 @@ func (c *ChiphellMonitor) FetchPostMainContent(postURL string) (string, string, 
 
 func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 	for _, post := range posts {
-		postHash := util.HashString(post.Title)
+		// 从帖子链接中提取ID
+		postID := extractPostID(post.Link)
 
-		if c.Database.IsNewPost(c.ForumName, postHash) {
-			c.Database.StorePostHash(c.ForumName, postHash)
+		if c.Database.IsNewPost(c.ForumName, postID) {
+			c.Database.StorePostID(c.ForumName, postID)
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 获取主楼内容
@@ -308,6 +308,16 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 		}
 	}
 	return nil
+}
+
+// 辅助函数：从链接中提取帖子ID
+func extractPostID(link string) string {
+	// 假设链接格式为 https://www.chiphell.com/thread-2646639-1-1.html
+	parts := strings.Split(link, "-")
+	if len(parts) > 1 {
+		return parts[1]
+	}
+	return ""
 }
 
 // 处理通知的辅助方法
