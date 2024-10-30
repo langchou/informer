@@ -44,7 +44,7 @@ func StartIPChecker(ctx context.Context) {
 func checkAllProxies() {
 	// 获取当前优选代理数量
 	preferredCount, err := redis.GetPreferredProxyCount()
-	if err == nil && preferredCount > 0 {
+	if err == nil && preferredCount > 50 {
 		mylog.Info(fmt.Sprintf("当前优选代理数量充足: %d，跳过检测", preferredCount))
 		return
 	}
