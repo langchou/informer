@@ -371,12 +371,27 @@ func (c *ChiphellMonitor) processNotification(title, message string) {
 
 func (c *ChiphellMonitor) MonitorPage() {
 	failedAttempts := 0
+	maxFailedAttempts := 3 // 最大连续失败次数
 
 	for {
 		content, err := c.FetchPageContent()
 		if err != nil {
 			failedAttempts++
-			mylog.Error("获取页面内容失败", "error", err)
+			mylog.Error(fmt.Sprintf("获取页面内容失败: %v", err))
+
+			// 如果是代理池为空的错误，增加等待时间
+			if strings.Contains(err.Error(), "代理池为空") {
+				mylog.Warn("代理池为空，等待2分钟后重试")
+				time.Sleep(2 * time.Minute)
+				continue
+			}
+
+			// 如果连续失败次数过多，增加等待时间
+			if failedAttempts >= maxFailedAttempts {
+				waitTime := time.Duration(failedAttempts*30) * time.Second
+				mylog.Warn(fmt.Sprintf("连续失败%d次，等待%v后重试", failedAttempts, waitTime))
+				time.Sleep(waitTime)
+			}
 			continue
 		}
 
@@ -398,6 +413,7 @@ func (c *ChiphellMonitor) MonitorPage() {
 
 		// 正常处理完毕，等待一段时间后再进行一次监控
 		waitTime := time.Duration(c.WaitTimeRange.Min+rand.Intn(c.WaitTimeRange.Max-c.WaitTimeRange.Min+1)) * time.Second
+		mylog.Debug(fmt.Sprintf("等待 %v 后继续监控", waitTime))
 		time.Sleep(waitTime)
 
 		// 定期清理数据库中过期的帖子

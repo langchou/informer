@@ -23,6 +23,19 @@ import (
 )
 
 func FetchWithProxies(targetURL string, headers map[string]string) (string, error) {
+	// 检查代理池数量
+	proxyCount, err := redis.GetProxyCount()
+	if err != nil {
+		return "", fmt.Errorf("获取代理数量失败: %v", err)
+	}
+
+	// 如果代理池为空，等待一段时间
+	if proxyCount == 0 {
+		mylog.Warn("代理池为空，等待30秒后重试")
+		time.Sleep(30 * time.Second)
+		return "", fmt.Errorf("代理池为空，请稍后重试")
+	}
+
 	// 首先尝试使用优选代理
 	preferredProxies, err := redis.GetPreferredProxies() // 获取所有优选代理
 	if err == nil && len(preferredProxies) > 0 {
