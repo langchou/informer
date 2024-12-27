@@ -16,15 +16,17 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-var _ ForumMonitor = &ChiphellMonitor{}
+type Post struct {
+	Title string
+	Link  string
+}
 
 type ChiphellMonitor struct {
 	ForumName     string
 	Cookies       string
-	UserKeywords  map[string][]string // 手机号及其关键词的映射
+	UserKeywords  map[string][]string
 	Notifier      *notifier.DingTalkNotifier
 	Database      *db.Database
-	Logger        *mylog.Logger
 	MessageQueue  chan NotificationMessage
 	WaitTimeRange struct {
 		Min int
@@ -39,14 +41,14 @@ type NotificationMessage struct {
 	AtPhoneNumber []string
 }
 
-func NewChiphellMonitor(forumName string, cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min, Max int }, proxyAPI string) *ChiphellMonitor {
+func NewMonitor(cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min, Max int }, proxyAPI string) *ChiphellMonitor {
 	monitor := &ChiphellMonitor{
-		ForumName:     forumName,
+		ForumName:     "chiphell",
 		Cookies:       cookies,
 		UserKeywords:  userKeywords,
 		Notifier:      notifier,
 		Database:      database,
-		MessageQueue:  make(chan NotificationMessage, 100), // 创建消息队列，容量100
+		MessageQueue:  make(chan NotificationMessage, 100),
 		WaitTimeRange: waitTimeRange,
 		ProxyAPI:      proxyAPI,
 	}
@@ -78,11 +80,36 @@ func (c *ChiphellMonitor) processMessageQueue() {
 				phoneNumbersMap := make(map[string]bool)
 
 				for i, msg := range messages {
-					// 添加分隔线
+					// 添加分隔线和序号
 					if i > 0 {
-						combinedMessage.WriteString("\n----------------------------------------\n")
+						combinedMessage.WriteString("\n\n---\n\n")
 					}
-					combinedMessage.WriteString(fmt.Sprintf("%s\n%s", msg.Title, msg.Message))
+					// 使用Markdown格式化消息
+					combinedMessage.WriteString(fmt.Sprintf("### %d. %s\n\n", i+1, msg.Title))
+					
+					// 确保链接单独成行且使用Markdown格式
+					lines := strings.Split(msg.Message, "\n")
+					for _, line := range lines {
+						if strings.Contains(line, "链接:") {
+							parts := strings.SplitN(line, ":", 2)
+							if len(parts) == 2 {
+								url := strings.TrimSpace(parts[1])
+								combinedMessage.WriteString(fmt.Sprintf("🔗 [点击查看详情](%s)\n\n", url))
+							}
+							continue
+						}
+						// 其他信息使用列表格式
+						if strings.Contains(line, ":") {
+							parts := strings.SplitN(line, ":", 2)
+							if len(parts) == 2 {
+								key := strings.TrimSpace(parts[0])
+								value := strings.TrimSpace(parts[1])
+								if value != "" && value != "-" {
+									combinedMessage.WriteString(fmt.Sprintf("- **%s**: %s\n", key, value))
+								}
+							}
+						}
+					}
 
 					// 收集所有需要@的手机号，去重
 					for _, phone := range msg.AtPhoneNumber {
@@ -290,21 +317,21 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			c.Database.StorePostID(c.ForumName, postID)
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
-			// 获取主楼内容
+			// 构建基本消息
+			basicMessage := fmt.Sprintf("标题: %s\n链接: %s", post.Title, post.Link)
+
+			// 尝试获取主楼内容
 			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
 			if err != nil {
 				mylog.Error(fmt.Sprintf("获取主楼内容失败: %v", err))
-				// 即使获取主楼失败，也继续处理其他帖子
-				message := fmt.Sprintf("标题: %s\n: %s\n", post.Title, post.Link)
-				c.processNotification(post.Title, message)
-				continue
+				// 即使获取详情失败，也发送基本信息
+				c.processNotification(post.Title, basicMessage)
+			} else {
+				// 构建完整消息
+				detailMessage := fmt.Sprintf("标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s",
+					post.Title, post.Link, qq, phone, price, address, tradeRange)
+				c.processNotification(post.Title, detailMessage)
 			}
-
-			// 构建完整消息
-			message := fmt.Sprintf("标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s",
-				post.Title, post.Link, qq, phone, price, address, tradeRange)
-
-			c.processNotification(post.Title, message)
 		}
 	}
 	return nil

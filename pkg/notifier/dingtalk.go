@@ -1,111 +1,96 @@
 package notifier
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"strings"
-	"sync"
+	"net/http"
+	"net/url"
 	"time"
 
-	"github.com/blinkbean/dingtalk"
 	mylog "github.com/langchou/informer/pkg/log"
 )
 
 type DingTalkNotifier struct {
-	client       *dingtalk.DingTalk
-	logger       *mylog.Logger
-	messageQueue []Message
-	mu           sync.Mutex
-	ticker       *time.Ticker
+	token  string
+	secret string
 }
 
-type Message struct {
-	Title        string
-	Content      string
-	PhoneNumbers []string
-	Time         time.Time
-}
-
-func NewDingTalkNotifier(token, secret string, logger *mylog.Logger) *DingTalkNotifier {
-	client := dingtalk.InitDingTalkWithSecret(token, secret)
-	n := &DingTalkNotifier{
-		client:       client,
-		logger:       logger,
-		messageQueue: make([]Message, 0),
-		ticker:       time.NewTicker(3 * time.Second), // 每3秒检查一次消息队列
-	}
-
-	// 启动消息处理协程
-	go n.processMessages()
-
-	return n
-}
-
-func (n *DingTalkNotifier) processMessages() {
-	for range n.ticker.C {
-		n.mu.Lock()
-		if len(n.messageQueue) == 0 {
-			n.mu.Unlock()
-			continue
-		}
-
-		// 获取所有待发送的消息
-		messages := n.messageQueue
-		n.messageQueue = make([]Message, 0)
-		n.mu.Unlock()
-
-		// 合并消息
-		var combinedContent strings.Builder
-		var allPhoneNumbers []string
-		phoneNumbersMap := make(map[string]bool)
-
-		for i, msg := range messages {
-			// 添加分隔线
-			if i > 0 {
-				combinedContent.WriteString("\n----------------------------------------\n")
-			}
-			combinedContent.WriteString(fmt.Sprintf("%s\n%s", msg.Title, msg.Content))
-
-			// 收集所有需要@的手机号，去重
-			for _, phone := range msg.PhoneNumbers {
-				if !phoneNumbersMap[phone] {
-					phoneNumbersMap[phone] = true
-					allPhoneNumbers = append(allPhoneNumbers, phone)
-				}
-			}
-		}
-
-		// 发送合并后的消息
-		var err error
-		if len(allPhoneNumbers) > 0 {
-			err = n.client.SendTextMessage(combinedContent.String(), dingtalk.WithAtMobiles(allPhoneNumbers))
-		} else {
-			err = n.client.SendTextMessage(combinedContent.String())
-		}
-
-		if err != nil {
-			mylog.Error(fmt.Sprintf("发送钉钉通知失败: %v", err))
-		} else {
-			mylog.Debug("钉钉通知发送成功")
-		}
+func NewDingTalkNotifier(token, secret string) *DingTalkNotifier {
+	return &DingTalkNotifier{
+		token:  token,
+		secret: secret,
 	}
 }
 
-func (n *DingTalkNotifier) SendNotification(title, content string, phoneNumbers []string) error {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+func (n *DingTalkNotifier) sign(timestamp int64) string {
+	stringToSign := fmt.Sprintf("%d\n%s", timestamp, n.secret)
+	h := hmac.New(sha256.New, []byte(n.secret))
+	h.Write([]byte(stringToSign))
+	return base64.StdEncoding.EncodeToString(h.Sum(nil))
+}
 
-	// 将消息添加到队列
-	n.messageQueue = append(n.messageQueue, Message{
-		Title:        title,
-		Content:      content,
-		PhoneNumbers: phoneNumbers,
-		Time:         time.Now(),
-	})
+func (n *DingTalkNotifier) SendNotification(title, message string, atMobiles []string) error {
+	timestamp := time.Now().UnixMilli()
+	sign := n.sign(timestamp)
 
+	webhook := fmt.Sprintf("https://oapi.dingtalk.com/robot/send?access_token=%s&timestamp=%d&sign=%s",
+		n.token, timestamp, url.QueryEscape(sign))
+
+	content := map[string]interface{}{
+		"msgtype": "markdown",
+		"markdown": map[string]string{
+			"title": title,
+			"text":  message,
+		},
+	}
+
+	if len(atMobiles) > 0 {
+		content["at"] = map[string]interface{}{
+			"atMobiles": atMobiles,
+			"isAtAll":   false,
+		}
+	}
+
+	jsonData, err := json.Marshal(content)
+	if err != nil {
+		mylog.Error("序列化消息失败", "error", err)
+		return err
+	}
+
+	resp, err := http.Post(webhook, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		mylog.Error("发送钉钉消息失败", "error", err)
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("钉钉API返回非200状态码: %d", resp.StatusCode)
+		mylog.Error("发送钉钉消息失败", "error", err)
+		return err
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		mylog.Error("解析钉钉响应失败", "error", err)
+		return err
+	}
+
+	if errCode, ok := result["errcode"].(float64); !ok || errCode != 0 {
+		err = fmt.Errorf("钉钉API返回错误: %v", result["errmsg"])
+		mylog.Error("发送钉钉消息失败", "error", err)
+		return err
+	}
+
+	mylog.Info("成功发送钉钉消息")
 	return nil
 }
 
-func (n *DingTalkNotifier) ReportError(title, content string) {
-	mylog.Error(fmt.Sprintf("错误: %s - %s", title, content))
-	n.SendNotification("监控程序错误: "+title, content, nil)
+func (n *DingTalkNotifier) ReportError(title, message string) error {
+	errorMessage := fmt.Sprintf("❌ **错误报告**\n\n**类型**: %s\n\n**详情**: %s", title, message)
+	return n.SendNotification("系统错误", errorMessage, nil)
 }

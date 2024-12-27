@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
-	"sync"
 	"time"
 
 	"github.com/langchou/informer/db"
@@ -16,15 +14,8 @@ import (
 	"github.com/langchou/informer/pkg/redis"
 	"golang.org/x/exp/rand"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite 驱动
+	_ "github.com/mattn/go-sqlite3"
 )
-
-type Message struct {
-	title   string
-	content string
-}
-
-var applog *mylog.Logger
 
 const dbFile = "data/posts.db"
 
@@ -52,17 +43,15 @@ func main() {
 	}
 	defer db.DB.Close()
 
-	// 创建每个论坛的表
-	for _, forum := range []string{"chiphell"} {
-		err := db.CreateTableIfNotExists(forum)
-		if err != nil {
-			mylog.Error("无法创建论坛表", "forum", forum, "error", err)
-			return
-		}
+	// 创建chiphell表
+	err = db.CreateTableIfNotExists("chiphell")
+	if err != nil {
+		mylog.Error("无法创建数据表", "error", err)
+		return
 	}
 
 	// 初始化 DingTalk 客户端
-	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret, applog)
+	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret)
 
 	// 初始化Redis连接
 	err = redis.InitRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
@@ -77,54 +66,31 @@ func main() {
 	// 初始化时更新一次代理池
 	if err := proxy.UpdateProxyPool(); err != nil {
 		mylog.Error("初始化代理池失败", "error", err)
-		// 不要在这里 return，继续运行程序
 	}
 
-	// 启动代理池管理器 - 这是唯一应该定期更新代理池的地方
+	// 启动代理池管理器
 	ctx := context.Background()
 	go proxy.StartProxyPoolManager(ctx)
 
 	// 启动IP检测器
 	go proxy.StartIPChecker(ctx)
 
-	var wg sync.WaitGroup
+	// 创建并启动监控器
+	monitor := monitor.NewMonitor(
+		cfg.Cookies,
+		cfg.UserKeyWords,
+		dingNotifier,
+		db,
+		cfg.WaitTimeRange,
+		cfg.ProxyPoolAPI,
+	)
 
-	for _, forum := range []string{"chiphell"} {
-		wg.Add(1)
-		go func(forum string) {
-			defer wg.Done()
-
-			forumConfig, ok := cfg.Forums[forum]
-			if !ok {
-				mylog.Error("没有找到 %s 论坛的配置", forum)
-				return
-			}
-
-			monitor := monitor.NewMonitor(
-				forum,
-				forumConfig.Cookies,
-				forumConfig.UserKeywords,
-				dingNotifier,
-				db,
-				struct{ Min, Max int }{
-					Min: forumConfig.WaitTimeRange.Min,
-					Max: forumConfig.WaitTimeRange.Max,
-				},
-				cfg.ProxyPoolAPI,
-			)
-
-			if monitor != nil {
-				for {
-					monitor.MonitorPage()
-					// 添加随机等待时间
-					waitTime := time.Duration(10+rand.Intn(5)) * time.Second
-					mylog.Debug(fmt.Sprintf("等待 %v 后继续监控", waitTime))
-					time.Sleep(waitTime)
-				}
-			}
-		}(forum)
+	// 主循环
+	for {
+		monitor.MonitorPage()
+		// 添加随机等待时间
+		waitTime := time.Duration(cfg.WaitTimeRange.Min+rand.Intn(cfg.WaitTimeRange.Max-cfg.WaitTimeRange.Min)) * time.Second
+		mylog.Debug("等待 %v 后继续监控", waitTime)
+		time.Sleep(waitTime)
 	}
-
-	// 等待所有 goroutine 完成
-	wg.Wait()
 }
