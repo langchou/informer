@@ -6,11 +6,11 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/langchou/informer/pkg/checker"
 	mylog "github.com/langchou/informer/pkg/log"
-	"github.com/langchou/informer/pkg/redis"
 )
 
 const (
@@ -19,6 +19,18 @@ const (
 )
 
 var ProxyAPI string
+
+// ProxyPool 代理池结构
+type ProxyPool struct {
+	sync.RWMutex
+	proxies         map[string]bool      // 普通代理池
+	preferredProxies map[string]float64  // 优选代理池，值为响应时间
+}
+
+var proxyPool = &ProxyPool{
+	proxies:         make(map[string]bool),
+	preferredProxies: make(map[string]float64),
+}
 
 // SetProxyAPI 设置代理API URL
 func SetProxyAPI(url string) {
@@ -42,44 +54,44 @@ func StartIPChecker(ctx context.Context) {
 
 // checkAllProxies 检查所有代理的可用性
 func checkAllProxies() {
-	// 获取当前优选代理数量
-	preferredCount, err := redis.GetPreferredProxyCount()
-	if err == nil && preferredCount > 50 {
+	proxyPool.RLock()
+	preferredCount := len(proxyPool.preferredProxies)
+	proxyPool.RUnlock()
+
+	if preferredCount > 50 {
 		mylog.Info(fmt.Sprintf("当前优选代理数量充足: %d，跳过检测", preferredCount))
 		return
 	}
 
-	proxies, err := redis.GetAllProxies()
-	if err != nil {
-		mylog.Error(fmt.Sprintf("获取代理列表失败: %v", err))
-		return
+	proxyPool.RLock()
+	proxies := make([]string, 0, len(proxyPool.proxies))
+	for proxy := range proxyPool.proxies {
+		proxies = append(proxies, proxy)
 	}
+	proxyPool.RUnlock()
 
 	mylog.Info(fmt.Sprintf("开始检测代理池中的IP，共 %d 个代理", len(proxies)))
 
-	// 检查每个代理
 	checkedCount := 0
 	for _, proxyIP := range proxies {
 		valid, responseTime := checker.CheckIP(proxyIP)
 		if valid {
-			// 如果代理可用，添加到优选列表
-			if err := redis.AddPreferredProxy(proxyIP, responseTime); err != nil {
-				mylog.Error(fmt.Sprintf("添加优选代理失败: %v", err))
-			} else {
-				mylog.Debug(fmt.Sprintf("添加新的优选代理: %s, 响应时间: %.2fms", proxyIP, responseTime))
-				checkedCount++
-			}
+			proxyPool.Lock()
+			proxyPool.preferredProxies[proxyIP] = responseTime
+			proxyPool.Unlock()
+			mylog.Debug(fmt.Sprintf("添加新的优选代理: %s, 响应时间: %.2fms", proxyIP, responseTime))
+			checkedCount++
 		}
 
-		// 如果已经找到足够的优选代理，就停止检测
 		if checkedCount >= 10 {
 			mylog.Info("已找到足够的优选代理，停止检测")
 			break
 		}
 	}
 
-	// 获取优选代理数量并记录日志
-	count, _ := redis.GetPreferredProxyCount()
+	proxyPool.RLock()
+	count := len(proxyPool.preferredProxies)
+	proxyPool.RUnlock()
 	mylog.Info(fmt.Sprintf("IP检测完成，当前优选代理数量: %d", count))
 }
 
@@ -89,23 +101,21 @@ func UpdateProxyPool() error {
 		return fmt.Errorf("ProxyAPI URL not set")
 	}
 
-	// 获取新代理
 	newProxies, err := fetchNewProxies()
 	if err != nil {
 		return fmt.Errorf("获取新代理失败: %v", err)
 	}
 
-	// 清空旧代理并添加新代理
-	if err := redis.ReplaceProxies(newProxies); err != nil {
-		return fmt.Errorf("更新代理失败: %v", err)
+	proxyPool.Lock()
+	// 清空现有代理
+	proxyPool.proxies = make(map[string]bool)
+	// 添加新代理
+	for _, proxy := range newProxies {
+		proxyPool.proxies[proxy] = true
 	}
+	proxyPool.Unlock()
 
-	// 获取当前代理数量用于日志
-	count, err := redis.GetProxyCount()
-	if err != nil {
-		return fmt.Errorf("获取代理数量失败: %v", err)
-	}
-
+	count := len(newProxies)
 	mylog.Info(fmt.Sprintf("代理池更新完成，当前代理数量: %d", count))
 	return nil
 }
@@ -132,7 +142,7 @@ func fetchNewProxies() ([]string, error) {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	proxies := strings.Split(strings.TrimSpace(string(body)), ",")
+	proxies := strings.Split(strings.TrimSpace(string(body)), "\n")
 	var cleanProxies []string
 	for _, p := range proxies {
 		proxy := strings.TrimSpace(p)
@@ -149,12 +159,58 @@ func fetchNewProxies() ([]string, error) {
 
 // GetProxy 获取一个代理
 func GetProxy() (string, error) {
-	return redis.GetRandomProxy()
+	// 首先尝试从优选代理池中获取
+	proxyPool.RLock()
+	if len(proxyPool.preferredProxies) > 0 {
+		// 获取响应时间最短的代理
+		var bestProxy string
+		var bestTime float64 = float64(^uint64(0) >> 1) // 最大float64值
+		for proxy, time := range proxyPool.preferredProxies {
+			if time < bestTime {
+				bestProxy = proxy
+				bestTime = time
+			}
+		}
+		proxyPool.RUnlock()
+		return bestProxy, nil
+	}
+	proxyPool.RUnlock()
+
+	// 如果没有优选代理，从普通代理池中随机获取一个
+	proxyPool.RLock()
+	defer proxyPool.RUnlock()
+	
+	if len(proxyPool.proxies) == 0 {
+		return "", fmt.Errorf("代理池为空")
+	}
+
+	// 随机选择一个代理
+	for proxy := range proxyPool.proxies {
+		return proxy, nil // 返回第一个找到的代理
+	}
+
+	return "", fmt.Errorf("无法获取代理")
+}
+
+// GetProxyCount 获取当前代理池中的代理数量
+func GetProxyCount() (int64, error) {
+	proxyPool.RLock()
+	count := len(proxyPool.proxies)
+	proxyPool.RUnlock()
+	return int64(count), nil
+}
+
+// RemoveProxy 从代理池中删除指定代理
+func RemoveProxy(proxy string) {
+	proxyPool.Lock()
+	delete(proxyPool.proxies, proxy)
+	delete(proxyPool.preferredProxies, proxy)
+	proxyPool.Unlock()
 }
 
 // StartProxyPoolManager 启动代理池管理器
 func StartProxyPoolManager(ctx context.Context) {
-	ticker := time.NewTicker(UpdateInterval) // 每5分钟更新一次
+	ticker := time.NewTicker(UpdateInterval)
 	defer ticker.Stop()
 
 	for {
@@ -169,7 +225,10 @@ func StartProxyPoolManager(ctx context.Context) {
 	}
 }
 
-// GetProxyCount 获取当前代理池中的代理数量
-func GetProxyCount() (int64, error) {
-	return redis.GetProxyCount()
+// GetPreferredProxyCount 获取优选代理数量
+func GetPreferredProxyCount() int {
+	proxyPool.RLock()
+	count := len(proxyPool.preferredProxies)
+	proxyPool.RUnlock()
+	return count
 }

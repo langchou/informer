@@ -4,6 +4,7 @@ logconfig:
   maxBackups: 5
   maxAge: 30
   compress: true
+  level: "info"
 
 dingtalk:
   token: ""
@@ -11,14 +12,12 @@ dingtalk:
 
 proxyPoolAPI: ""
 
-forums:
-  chiphell:
-    cookies: ""
-    userKeyWords:
-      "158********":
-        - "iphone"
-      "177********":
-        - "iphone"
-    waitTimeRange:
-      min: 2
-      max: 5
+# Chiphell配置
+cookies: ""
+userKeyWords:
+  "158********":
+    - "iphone"
+
+waitTimeRange:
+  min: 2
+  max: 5

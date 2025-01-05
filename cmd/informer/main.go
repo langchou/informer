@@ -11,7 +11,6 @@ import (
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
 	"github.com/langchou/informer/pkg/proxy"
-	"github.com/langchou/informer/pkg/redis"
 	"golang.org/x/exp/rand"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -52,13 +51,6 @@ func main() {
 
 	// 初始化 DingTalk 客户端
 	dingNotifier := notifier.NewDingTalkNotifier(cfg.DingTalk.Token, cfg.DingTalk.Secret)
-
-	// 初始化Redis连接
-	err = redis.InitRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB)
-	if err != nil {
-		mylog.Error("无法初始化Redis连接", "error", err)
-		return
-	}
 
 	// 设置 ProxyAPI
 	proxy.SetProxyAPI(cfg.ProxyPoolAPI)

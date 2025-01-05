@@ -12,7 +12,6 @@ import (
 	mylog "github.com/langchou/informer/pkg/log"
 	"github.com/langchou/informer/pkg/notifier"
 	"github.com/langchou/informer/pkg/proxy"
-	"github.com/langchou/informer/pkg/redis"
 	"golang.org/x/exp/rand"
 )
 
@@ -29,8 +28,8 @@ type ChiphellMonitor struct {
 	Database      *db.Database
 	MessageQueue  chan NotificationMessage
 	WaitTimeRange struct {
-		Min int
-		Max int
+		Min int `yaml:"min"`
+		Max int `yaml:"max"`
 	}
 	ProxyAPI string
 }
@@ -41,7 +40,7 @@ type NotificationMessage struct {
 	AtPhoneNumber []string
 }
 
-func NewMonitor(cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min, Max int }, proxyAPI string) *ChiphellMonitor {
+func NewMonitor(cookies string, userKeywords map[string][]string, notifier *notifier.DingTalkNotifier, database *db.Database, waitTimeRange struct{ Min int `yaml:"min"`; Max int `yaml:"max"` }, proxyAPI string) *ChiphellMonitor {
 	monitor := &ChiphellMonitor{
 		ForumName:     "chiphell",
 		Cookies:       cookies,
@@ -80,14 +79,12 @@ func (c *ChiphellMonitor) processMessageQueue() {
 				phoneNumbersMap := make(map[string]bool)
 
 				for i, msg := range messages {
-					// 添加分隔线和序号
+					// 添加分隔线（除了第一条消息）
 					if i > 0 {
-						combinedMessage.WriteString("\n\n---\n\n")
+						combinedMessage.WriteString("\n----------------------------------------\n\n")
 					}
-					// 使用Markdown格式化消息
-					combinedMessage.WriteString(fmt.Sprintf("### %d. %s\n\n", i+1, msg.Title))
 					
-					// 确保链接单独成行且使用Markdown格式
+					// 处理消息内容
 					lines := strings.Split(msg.Message, "\n")
 					for _, line := range lines {
 						if strings.Contains(line, "链接:") {
@@ -98,14 +95,38 @@ func (c *ChiphellMonitor) processMessageQueue() {
 							}
 							continue
 						}
-						// 其他信息使用列表格式
+
+						// 处理系统信息部分
+						if strings.Contains(line, "系统信息:") {
+							combinedMessage.WriteString("\n**系统信息**\n\n")
+							continue
+						}
+
+						// 处理其他信息
 						if strings.Contains(line, ":") {
 							parts := strings.SplitN(line, ":", 2)
 							if len(parts) == 2 {
 								key := strings.TrimSpace(parts[0])
 								value := strings.TrimSpace(parts[1])
 								if value != "" && value != "-" {
-									combinedMessage.WriteString(fmt.Sprintf("- **%s**: %s\n", key, value))
+									// 根据不同类型的信息添加不同的图标
+									if strings.Contains(key, "价格") {
+										combinedMessage.WriteString(fmt.Sprintf("💰 **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "电话") || strings.Contains(key, "QQ") {
+										combinedMessage.WriteString(fmt.Sprintf("📞 **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "所在地") {
+										combinedMessage.WriteString(fmt.Sprintf("📍 **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "交易范围") {
+										combinedMessage.WriteString(fmt.Sprintf("🎯 **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "当前时间") {
+										combinedMessage.WriteString(fmt.Sprintf("⏰ **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "代理数") {
+										combinedMessage.WriteString(fmt.Sprintf("🔄 **%s**：%s\n\n", key, value))
+									} else if strings.Contains(key, "标题") {
+										combinedMessage.WriteString(fmt.Sprintf("## 📢 %s\n\n", value))
+									} else {
+										combinedMessage.WriteString(fmt.Sprintf("**%s**：%s\n\n", key, value))
+									}
 								}
 							}
 						}
@@ -122,7 +143,7 @@ func (c *ChiphellMonitor) processMessageQueue() {
 
 				// 发送合并后的消息
 				err := c.Notifier.SendNotification(
-					fmt.Sprintf("新帖子通知 (共%d条)", len(messages)),
+					"新帖子通知",
 					combinedMessage.String(),
 					allPhoneNumbers,
 				)
@@ -318,7 +339,7 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 			mylog.Info(fmt.Sprintf("检测到新帖子: 标题: %s 链接: %s", post.Title, post.Link))
 
 			// 构建基本消息
-			basicMessage := fmt.Sprintf("标题: %s\n链接: %s", post.Title, post.Link)
+			basicMessage := fmt.Sprintf("标题: %s\n\n链接: %s", post.Title, post.Link)
 
 			// 尝试获取主楼内容
 			qq, price, tradeRange, address, phone, err := c.FetchPostMainContent(post.Link)
@@ -327,8 +348,8 @@ func (c *ChiphellMonitor) ProcessPosts(posts []Post) error {
 				// 即使获取详情失败，也发送基本信息
 				c.processNotification(post.Title, basicMessage)
 			} else {
-				// 构建完整消息
-				detailMessage := fmt.Sprintf("标题: %s\n链接: %s\nQQ: %s\n电话: %s\n价格: %s\n所在地: %s\n交易范围: %s",
+				// 构建完整消息，每个字段之间添加空行
+				detailMessage := fmt.Sprintf("标题: %s\n\n链接: %s\n\nQQ: %s\n\n电话: %s\n\n价格: %s\n\n所在地: %s\n\n交易范围: %s",
 					post.Title, post.Link, qq, phone, price, address, tradeRange)
 				c.processNotification(post.Title, detailMessage)
 			}
@@ -357,17 +378,13 @@ func (c *ChiphellMonitor) processNotification(title, message string) {
 	}
 
 	// 获取优选代理数量
-	preferredCount, err := redis.GetPreferredProxyCount()
-	preferredProxyCount := 0
-	if err == nil {
-		preferredProxyCount = int(preferredCount)
-	}
+	preferredProxyCount := proxy.GetPreferredProxyCount()
 
 	// 获取当前系统时间
 	currentTime := time.Now().Format("2006-01-02 15:04:05")
 
-	// 在消息末尾添加系统信息
-	messageWithInfo := fmt.Sprintf("%s\n系统信息:\n当前时间: %s\n可用代理数: %d\n优选代理数: %d\n",
+	// 在消息末尾添加系统信息，确保有足够的分隔
+	messageWithInfo := fmt.Sprintf("%s\n\n系统信息:\n当前时间: %s\n可用代理数: %d\n优选代理数: %d",
 		message,
 		currentTime,
 		proxyCount,
