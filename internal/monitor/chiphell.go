@@ -91,14 +91,14 @@ func (c *ChiphellMonitor) processMessageQueue() {
 							parts := strings.SplitN(line, ":", 2)
 							if len(parts) == 2 {
 								url := strings.TrimSpace(parts[1])
-								combinedMessage.WriteString(fmt.Sprintf("🔗 [点击查看详情](%s)\n\n", url))
+								combinedMessage.WriteString(fmt.Sprintf("【链接】%s\n\n", url))
 							}
 							continue
 						}
 
 						// 处理系统信息部分
 						if strings.Contains(line, "系统信息:") {
-							combinedMessage.WriteString("\n**系统信息**\n\n")
+							combinedMessage.WriteString("\n系统信息\n\n")
 							continue
 						}
 
@@ -109,23 +109,22 @@ func (c *ChiphellMonitor) processMessageQueue() {
 								key := strings.TrimSpace(parts[0])
 								value := strings.TrimSpace(parts[1])
 								if value != "" && value != "-" {
-									// 根据不同类型的信息添加不同的图标
 									if strings.Contains(key, "价格") {
-										combinedMessage.WriteString(fmt.Sprintf("💰 **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【价格】%s\n\n", value))
 									} else if strings.Contains(key, "电话") || strings.Contains(key, "QQ") {
-										combinedMessage.WriteString(fmt.Sprintf("📞 **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【%s】%s\n\n", key, value))
 									} else if strings.Contains(key, "所在地") {
-										combinedMessage.WriteString(fmt.Sprintf("📍 **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【所在地】%s\n\n", value))
 									} else if strings.Contains(key, "交易范围") {
-										combinedMessage.WriteString(fmt.Sprintf("🎯 **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【交易范围】%s\n\n", value))
 									} else if strings.Contains(key, "当前时间") {
-										combinedMessage.WriteString(fmt.Sprintf("⏰ **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【时间】%s\n\n", value))
 									} else if strings.Contains(key, "代理数") {
-										combinedMessage.WriteString(fmt.Sprintf("🔄 **%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【%s】%s\n\n", key, value))
 									} else if strings.Contains(key, "标题") {
-										combinedMessage.WriteString(fmt.Sprintf("## 📢 %s\n\n", value))
+										combinedMessage.WriteString(fmt.Sprintf("【新帖】%s\n\n", value))
 									} else {
-										combinedMessage.WriteString(fmt.Sprintf("**%s**：%s\n\n", key, value))
+										combinedMessage.WriteString(fmt.Sprintf("【%s】%s\n\n", key, value))
 									}
 								}
 							}
@@ -141,8 +140,15 @@ func (c *ChiphellMonitor) processMessageQueue() {
 					}
 				}
 
-				// 发送合并后的消息
-				err := c.Notifier.SendNotification(
+				// 打印消息内容摘要
+				contentPreview := combinedMessage.String()
+				if len(contentPreview) > 100 {
+					contentPreview = contentPreview[:100] + "..."
+				}
+				mylog.Debug(fmt.Sprintf("消息内容预览: %s", contentPreview))
+				
+				// 只发送一条text消息
+				err := c.Notifier.SendTextNotification(
 					"新帖子通知",
 					combinedMessage.String(),
 					allPhoneNumbers,
@@ -398,11 +404,20 @@ func (c *ChiphellMonitor) processNotification(title, message string) {
 	for phoneNumber, keywords := range c.UserKeywords {
 		for _, keyword := range keywords {
 			lowerKeyword := strings.ToLower(keyword)
-			if strings.Contains(strings.ToLower(title), lowerKeyword) {
+			lowerTitle := strings.ToLower(title)
+			if strings.Contains(lowerTitle, lowerKeyword) {
+				mylog.Debug(fmt.Sprintf("标题 '%s' 匹配到关键词 '%s'，将@手机号 %s", title, keyword, phoneNumber))
 				phoneNumbers = append(phoneNumbers, phoneNumber)
 				break
 			}
 		}
+	}
+	
+	// 记录匹配结果
+	if len(phoneNumbers) > 0 {
+		mylog.Debug(fmt.Sprintf("帖子 '%s' 匹配到 %d 个手机号需要@", title, len(phoneNumbers)))
+	} else {
+		mylog.Debug(fmt.Sprintf("帖子 '%s' 没有匹配到任何关键词", title))
 	}
 
 	// 发送通知
