@@ -5,7 +5,6 @@ services:
     image: jontyding/informer:latest
     volumes:
       - ./data:/app/data
-      - ./build/data:/app/build/data
     environment:
       - TZ=Asia/Shanghai
     restart: unless-stopped
