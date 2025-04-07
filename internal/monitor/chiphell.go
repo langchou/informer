@@ -96,9 +96,11 @@ func (c *ChiphellMonitor) processMessageQueue() {
 							continue
 						}
 
-						// 处理系统信息部分
-						if strings.Contains(line, "系统信息:") {
-							combinedMessage.WriteString("\n系统信息\n\n")
+						// 跳过系统信息部分
+						if strings.Contains(line, "系统信息:") || 
+						   strings.Contains(line, "当前时间:") || 
+						   strings.Contains(line, "可用代理数:") || 
+						   strings.Contains(line, "优选代理数:") {
 							continue
 						}
 
@@ -118,9 +120,11 @@ func (c *ChiphellMonitor) processMessageQueue() {
 									} else if strings.Contains(key, "交易范围") {
 										combinedMessage.WriteString(fmt.Sprintf("【交易范围】%s\n\n", value))
 									} else if strings.Contains(key, "当前时间") {
-										combinedMessage.WriteString(fmt.Sprintf("【时间】%s\n\n", value))
+										// 跳过当前时间信息
+										continue
 									} else if strings.Contains(key, "代理数") {
-										combinedMessage.WriteString(fmt.Sprintf("【%s】%s\n\n", key, value))
+										// 跳过代理数信息
+										continue
 									} else if strings.Contains(key, "标题") {
 										combinedMessage.WriteString(fmt.Sprintf("【新帖】%s\n\n", value))
 									} else {
@@ -376,27 +380,6 @@ func extractPostID(link string) string {
 
 // 处理通知的辅助方法
 func (c *ChiphellMonitor) processNotification(title, message string) {
-	// 获取当前可用代理数量
-	count, err := proxy.GetProxyCount()
-	proxyCount := 0
-	if err == nil {
-		proxyCount = int(count)
-	}
-
-	// 获取优选代理数量
-	preferredProxyCount := proxy.GetPreferredProxyCount()
-
-	// 获取当前系统时间
-	currentTime := time.Now().Format("2006-01-02 15:04:05")
-
-	// 在消息末尾添加系统信息，确保有足够的分隔
-	messageWithInfo := fmt.Sprintf("%s\n\n系统信息:\n当前时间: %s\n可用代理数: %d\n优选代理数: %d",
-		message,
-		currentTime,
-		proxyCount,
-		preferredProxyCount,
-	)
-
 	// 收集所有关注该帖子的手机号
 	var phoneNumbers []string
 
@@ -422,9 +405,9 @@ func (c *ChiphellMonitor) processNotification(title, message string) {
 
 	// 发送通知
 	if len(phoneNumbers) > 0 {
-		c.enqueueNotification(title, messageWithInfo, phoneNumbers)
+		c.enqueueNotification(title, message, phoneNumbers)
 	} else {
-		c.enqueueNotification(title, messageWithInfo, nil)
+		c.enqueueNotification(title, message, nil)
 	}
 }
 
